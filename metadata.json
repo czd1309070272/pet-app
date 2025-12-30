@@ -1,0 +1,8 @@
+{
+  "name": "PawPal AI - 萌寵AI日記2",
+  "description": "一站式AI寵物健康管理與情感陪伴平台，包含糞便皮膚檢測、成分分析、診療翻譯、港台腔日記、保險計算及急診地圖。",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
