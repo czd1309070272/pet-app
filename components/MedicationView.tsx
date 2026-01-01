@@ -31,6 +31,9 @@ const MedicationView: React.FC<MedicationViewProps> = ({ onBack, medications, se
     return matchesDate && matchesPet;
   });
 
+  // 判斷當前篩選的寵物是否為星空寵物，或者是否是全部模式（在全部模式下顯示按鈕，在星空寵物下隱藏）
+  const isSelectedPetMemorial = filterPetName !== 'ALL' && pets.find(p => p.name === filterPetName)?.isMemorial;
+
   const toggleTaken = (id: string) => {
     setMedications(prev => prev.map(m => m.id === id ? { ...m, isTaken: !m.isTaken } : m));
   };
@@ -86,8 +89,10 @@ const MedicationView: React.FC<MedicationViewProps> = ({ onBack, medications, se
         <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest">
           {filterDate ? '當日用藥' : '提醒清單'}
         </h3>
-        {activePets.length > 0 && (
-          <button onClick={() => setShowAdd(true)} className="p-2 bg-indigo-500 text-white rounded-xl shadow-lg active:scale-90 transition-transform">
+        
+        {/* 只有當前視圖不是星空寵物時，且有活躍寵物時才顯示添加按鈕 */}
+        {!isSelectedPetMemorial && activePets.length > 0 && (
+          <button onClick={() => setShowAdd(true)} className="p-2 bg-indigo-500 text-white rounded-xl shadow-lg active:scale-90 transition-transform animate-in zoom-in duration-300">
             <Plus size={20} />
           </button>
         )}

@@ -43,7 +43,8 @@ const AlbumView: React.FC<AlbumViewProps> = ({ onBack }) => {
     setIsUploading(true);
     try {
       const activeCategory = category === 'ALL' ? 'DAILY' : category;
-      const newPhoto = await backend.addAlbumPhoto(activeCategory);
+      // 修改：將文件對象傳遞給後端，而不是只傳類別
+      const newPhoto = await backend.addAlbumPhoto(activeCategory, file);
       setPhotos([newPhoto, ...photos]);
       if (window.navigator.vibrate) window.navigator.vibrate(50);
     } catch (err) {

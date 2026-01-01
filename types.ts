@@ -163,3 +163,89 @@ export interface LogisticsStep {
   desc: string;
   isCompleted?: boolean;
 }
+
+export interface UserInfo {
+  id: string;
+  username: string;
+  name: string;
+  avatar: string;
+  isVIP: boolean;
+  vipLevel: string;
+  vipExpiry: string;
+  phone?: string;
+  gender?: string;
+  googleBound?: boolean;
+  appleBound?: boolean;
+  level?: number;
+}
+
+export interface PetProfile {
+  id: string;
+  name: string;
+  breed: string;
+  avatar: string;
+  isMemorial: boolean;
+  gender: string;
+  birthday: string;
+  hobbies: string;
+  memorialDate?: string;
+}
+
+export interface AlbumPhoto {
+  id: string;
+  url: string;
+  category: 'DAILY' | 'HEALTH' | 'TRAVEL' | 'ALL';
+  date: string;
+}
+
+export interface Comment {
+  id: string;
+  author: string;
+  avatar: string;
+  content: string;
+  time: string;
+  likes: number;
+  isLiked: boolean;
+  isVIP?: boolean;
+  vipLevel?: string;
+  replyToName?: string;
+  replies?: Comment[];
+}
+
+export interface Post {
+  id: number;
+  author: string;
+  avatar: string;
+  time: string;
+  content: string;
+  fullContent?: string;
+  images: string[];
+  likes: number;
+  comments: number;
+  isLiked: boolean;
+  isV?: boolean;
+  isVIP?: boolean;
+  vipLevel?: string;
+  userTags: string[];
+  commentList: Comment[];
+}
+
+export interface HealthScanResult {
+  status: 'Healthy' | 'Observation';
+  desc: string;
+  suggestions: string[];
+  resultUrl: string;
+}
+
+export interface ScannerResult {
+  hasRisk: boolean;
+  safeIngredients: string[];
+  resultUrl: string;
+  summary: string;
+}
+
+export interface TranslatorResult {
+  explanation: string;
+  suggestions: string[];
+  termExcerpts: string;
+}

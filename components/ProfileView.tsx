@@ -66,7 +66,8 @@ const ProfileView: React.FC<ProfileViewProps> = ({ onBack, onNavigate, appointme
     breed: '',
     gender: '小公主 (已絕育)',
     birthday: new Date().toISOString().split('T')[0],
-    hobbies: ''
+    hobbies: '',
+    isMemorial: false
   });
   const [tempAvatar, setTempAvatar] = useState('https://picsum.photos/seed/pet_placeholder/200');
 
@@ -109,7 +110,8 @@ const ProfileView: React.FC<ProfileViewProps> = ({ onBack, onNavigate, appointme
         breed: '',
         gender: '小公主 (已絕育)',
         birthday: new Date().toISOString().split('T')[0],
-        hobbies: ''
+        hobbies: '',
+        isMemorial: false
       });
     } catch (err) {
       console.error(err);
