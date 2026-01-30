@@ -1,0 +1,44 @@
+{
+  "key_pool": [
+    {
+      "provider": "dashscope",
+      "api_key": "sk-0d6be54021a544f9b4778224e779b4a5",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen3-max",
+      "label": "Qwen3-Max",
+      "desc" : "極速、平衡的創意輸出",
+      "recommended": "True",
+      "disabled": "False"
+    },
+    {
+      "provider": "dashscope",
+      "api_key": "sk-0d6be54021a544f9b4778224e779b4a5",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-flash",
+      "label": "Qwen-Flash",
+      "desc" : "極速、平衡的創意輸出",
+      "recommended": "True",
+      "disabled": "False"
+    },
+    {
+      "provider": "openrouter",
+      "api_key": "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",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "openai/gpt-5-mini",
+      "label": "GPT-5 Mini",
+      "desc" : "極速、平衡的創意輸出",
+      "recommended": "True",
+      "disabled": "False"
+    },
+    {
+      "provider": "openrouter",
+      "api_key": "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",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "openai/gpt-4o-mini",
+      "label": "GPT-4o-Mini",
+      "desc" : "極速、平衡的創意輸出",
+      "recommended": "True",
+      "disabled": "False"
+    }
+  ]
+}
