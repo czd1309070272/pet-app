@@ -97,6 +97,19 @@ class LanguageModel:
 
         # 步驟6: 最終失敗，返回 None
         return None
+    def parse_pet_translate_json(self,raw_str):
+        # 1. 處理潛在的真實換行符，將其替換為字面上的 \n
+        # 這個正則表達式會尋找在引號內的真實換行並修復它
+        fixed_str = re.sub(r'(?<=[:"\[,])\s*\n\s*(?=[^\]}])', r'\\n', raw_str)
+        
+        try:
+            # 2. 使用 strict=False 允許控制字元
+            return json.loads(fixed_str, strict=False)
+        except json.JSONDecodeError:
+            # 3. 如果還是失敗，最後一招：手動清理掉所有換行符，只保留空格
+            # 雖然格式會稍微跑掉，但至少能讀到資料
+            sanitized = raw_str.replace('\n', ' ').replace('\r', ' ')
+            return json.loads(sanitized, strict=False)
     async def stream_completion(
             self,
             user_message: str,
@@ -228,7 +241,7 @@ class LanguageModel:
 
             return "【系統錯誤】所有模型配置均調用失敗，請檢查密鑰或網絡"
 llm=LanguageModel()
-if __name__ == '__main__':
+# if __name__ == '__main__':
     # llm=LanguageModel()
     # async def event_generator():
     #     async for chunk in llm.stream_completion(
@@ -238,13 +251,19 @@ if __name__ == '__main__':
     #         temperature=0.7
     #     ):
     #         yield chunk
-    result_from_llm="""
-    {
-        "riskIngredients": [],
-        "safeIngredients": ["吡虫啉", "莫昔克丁"],
-        "resultUrl": "",
-        "summary": "金毛犬3歲雄性，使用本品整體安全性高，無已知禁忌；關鍵警示：避免犬隻舔舐藥液，以免引發神經系統反應。"
-    }
-    """
-    result=llm.parse_pet_drug_json(result_from_llm)
-    print(result)
+    # result_from_llm="""
+    # {
+    # "explanation": "根據電腦斷層掃描報告，您的小貓（6個月大，公貓）頭部出現一些異常情況。首先，雙側鼻腔、蝶狀竇及左側額竇內有不正常的軟組織物質積聚，尤其左邊較多， 這通常表示有鼻炎（鼻腔發炎），可能由病毒或細菌感染引起，會導致流鼻水、打噴嚏或呼吸困難等症狀。其次，左耳的鼓泡（中耳部位）完全被不均勻的軟組織填滿，右耳則是部分填滿，這提示可能存在中耳息肉或中耳炎伴積液，這類問題會影響聽力，甚至引發耳朵疼痛或平衡感失調。第三，左側下頜淋巴結稍大，但沒有發現腫瘤或其他嚴重問題，考慮是身體對感染產生的反應性腫大，屬於常見現象，通常會隨著感染改善而恢復正常。腦部結構和顱骨對稱，沒有發現異常，這是好消息。整體而言，問題主要集中在鼻子和耳朵，與感染有關的可能性較高，但需進一步檢查以確認診斷。",
+    # "suggestion": [
+    #     "盡快帶寶貝到獸醫診所做耳內鏡檢查，以明確中耳是否有息肉或積液",
+    #     "按醫生建議進行鼻炎治療，可能需要抗生素或抗炎藥物",
+    #     "觀察寶貝是否有持續流鼻水、打噴嚏、耳朵抓癢或搖頭等行為，如有惡化立即回診",
+    #     "保持環境清潔，避免接觸其他生病的貓，減少感染風險",
+    #     "暫時避免自行用滴耳液或藥物，以免加重病情",
+    #     "定期回診追蹤淋巴結大小變化及症狀改善情況"
+    # ],
+    # "termExcerpts": "鼓泡 (鼓室)：中耳的空間，若充滿液體或異物會影響聽力與平衡\n軟組織衰減 (Soft tissue attenuation)：影像上顯示的非骨骼、非氣體的組織密度，代表有分泌物或炎症\n蝶窦 (Sphenoid sinus)：位於頭骨深處的鼻竇之一，易受感染影響\n額竇 (Frontal sinus)：位於額頭後方的鼻竇，發炎時會導致局部壓力感\n鼻甲骨 (Nasal turbinate)：鼻腔內的骨性結構，發炎時會腫脹模糊\n下頜淋巴結 (Submandibular lymph node)：位於下巴下方的淋巴結，感染時會腫大\n反應性淋巴結病 (Reactive lymphadenopathy)：因感 染或炎症導致的淋巴結輕度腫大，屬良性反應\n中耳炎 (Otitis media)：中耳發炎，可能伴隨積液或息肉，會影響聽力與平衡"
+    # }
+    # """
+    # result=llm.super_safe_json_load(result_from_llm)
+    # print(result.get('explanation'))

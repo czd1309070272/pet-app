@@ -120,18 +120,175 @@ async def analyze_ingredient_image(file: UploadFile = File(...),
             status_code=500,
             detail=f"成分分析服务异常: {str(e)}"
         )
-    
+class TranslatorResult(BaseModel):
+    explanation: str
+    suggestions: List[str] = []         # 改成复数，与你的代码一致
+    termExcerpts: str
 @router.post("/api/scanner/translate", response_model=AIResponse)
 async def translate_pet_report_image(file: UploadFile = File(...)):
-    print(file)
+    # # 读取文件内容
+    # contents = await file.read()
+
+    # # 限制文件大小（约 10MB）
+    # if len(contents) > 10 * 1024 * 1024:
+    #     raise HTTPException(status_code=400, detail="图片太大，请上传小于10MB的文件")
+    # # 转 base64
+    # base64_image = base64.b64encode(contents).decode("utf-8")
+    # mime_type = file.content_type
+    # image_data_uri = f"data:{mime_type};base64,{base64_image}"
+    # # 调用 Mistral API
+    # time.sleep(2)
+    # response=ocr.ocr_image(image_data_uri)
+
+    # if response.pages:
+    #     print("辨識結果（Markdown格式）：")
+    #     print(response.pages[0].markdown)
+    #     ocr_result = response.pages[0].markdown
+    #     print("\n使用頁數：", response.usage_info.pages_processed)
+    # else:
+    #     print("辨識失敗，沒有頁面資料")
+    # print(ocr_result)
+    ocr_result="""
+    辨識結果（Markdown格式）：
+    中国农业大学动物医院影像中心
+
+    CT远程诊断报告单
+
+    图
+
+    主人姓名：
+
+    宅物姓名：
+
+    年龄：6月
+
+    性别：雄性
+
+    动物种类：猫
+
+    动物品种：猫
+
+    检查部位：头部
+
+    ![img-0.jpeg](img-0.jpeg)
+
+    ![img-1.jpeg](img-1.jpeg)
+
+    # 影像表现：
+
+    1. 双侧鼻腔、蝶窦及左侧额窦内散在软组织衰减物质，左侧较右侧多。部分鼻甲骨影像不清。鼻中隔纹理清晰。
+    2. 左侧鼓泡内及近鼓泡外耳道不均匀软组织衰减完全填充（5-70HU）。右侧鼓泡内及近鼓泡外耳道不均匀软组织衰减不完全填充（5-40HU）。
+    3. 脑实质衰减均匀，颅骨左右对称。
+    4. 下颌淋巴结厚径：左侧 $0.45 \mathrm{~cm}$ 、 $0.32 \mathrm{~cm}$ ，右侧 $0.34 \mathrm{~cm}$ 、 $0.28 \mathrm{~cm}$ 。
+    5. 牙未见明显异常。
+
+    # 影像诊断：
+
+    1. 双侧鼓泡内疑中耳息肉，不排除中耳炎伴积液，建议结合耳内镜评估。
+    2. 双侧鼻腔、蝶窦及左侧额窦分泌物，左侧较右侧多，提示鼻炎，考虑与病毒/细菌感染相关。
+    3. 左侧下颌淋巴结增大，疑反应性淋巴结病。
+
+    诊断医师：
+
+    审核医生：
+
+    使用頁數： 1
+    中国农业大学动物医院影像中心
+
+    CT远程诊断报告单
+
+    图
+
+    主人姓名：
+
+    宅物姓名：
+
+    年龄：6月
+
+    性别：雄性
+
+    动物种类：猫
+
+    动物品种：猫
+
+    检查部位：头部
+
+    ![img-0.jpeg](img-0.jpeg)
+
+    ![img-1.jpeg](img-1.jpeg)
+
+    # 影像表现：
+
+    1. 双侧鼻腔、蝶窦及左侧额窦内散在软组织衰减物质，左侧较右侧多。部分鼻甲骨影像不清。鼻中隔纹理清晰。
+    2. 左侧鼓泡内及近鼓泡外耳道不均匀软组织衰减完全填充（5-70HU）。右侧鼓泡内及近鼓泡外耳道不均匀软组织衰减不完全填充（5-40HU）。
+    3. 脑实质衰减均匀，颅骨左右对称。
+    4. 下颌淋巴结厚径：左侧 $0.45 \mathrm{~cm}$ 、 $0.32 \mathrm{~cm}$ ，右侧 $0.34 \mathrm{~cm}$ 、 $0.28 \mathrm{~cm}$ 。
+    5. 牙未见明显异常。
+
+    # 影像诊断：
+
+    1. 双侧鼓泡内疑中耳息肉，不排除中耳炎伴积液，建议结合耳内镜评估。
+    2. 双侧鼻腔、蝶窦及左侧额窦分泌物，左侧较右侧多，提示鼻炎，考虑与病毒/细菌感染相关。
+    3. 左侧下颌淋巴结增大，疑反应性淋巴结病。
+
+    诊断医师：
+
+    审核医生：    
+    """
+    system_prompt="""
+    你是一位精通中英双语的兽医临床翻译专家，熟悉犬猫常见疾病、化验指标、影像学描述、药物名称、解剖学术语，以及香港、澳门、广东地区的宠物医疗用语习惯。
+
+    任务：将用户提供的宠物诊断报告（可能是英文、中文、混杂，或包含专业医学术语）翻译并解释成**通俗易懂的繁体中文**，适合香港、澳门、广东地区的宠物主人阅读。
+
+    要求：
+    1. explanation（解释）：用简单、亲切的繁体中文完整解释整个报告的核心内容，包括：
+    - 主要诊断结论
+    - 异常指标的含义
+    - 可能的疾病或问题
+    - 避免过于专业晦涩的术语，必要时加括号解释
+    - 语气温和、安慰，不要吓到主人，但要诚实说明严重程度
+
+    2. suggestion（建议）：列出 3–8 条最实用的后续建议（列表形式），用繁体中文，每条一句，简洁有力，例如：
+    - 尽快带宝贝回诊做进一步检查
+    - 按时服用医生开的 XX 药物
+    - 注意观察呕吐/食欲/精神状态，如有恶化立即就医
+    - 饮食建议：暂时喂易消化的处方粮
+
+    3. termExcerpts（专业术语摘录）：提取报告中出现的 5–15 个关键专业术语，提供中英对照 + 简短通俗解释，例如：
+    ALT (丙氨酸氨基转移酶)：肝功能指标，升高可能表示肝脏有损伤
+    BUN (血尿素氮)：肾功能指标，偏高提示肾脏排毒功能下降
+
+    输出必须是纯合法的 JSON，严格符合以下结构，无任何多余文字、注释、markdown、前缀后缀。直接从 { 开始，到 } 结束。
+
+    JSON 结构（不可增减或改名栏位）：
+    {
+    "explanation": "完整的报告解释文字（一段或多段繁体中文）",
+    "suggestion": ["建议1", "建议2", "建议3", ...],
+    "termExcerpts": "专业术语摘录文字，每行一个，格式：英文缩写 (中文全称)：通俗解释\n英文缩写 (中文全称)：通俗解释\n..."
+    }
+
+    现在请直接翻译并分析以下宠物诊断报告内容，输出纯 JSON，輸出 JSON 時：
+    - 物件 { 後面必須立即接 "key"，嚴禁出現換行或多餘空格
+    - 所有字串內的換行必須寫成 \\n，不可出現裸換行
+    - 直接從 { 開始，到 } 結束，無任何前後文字
+    """
+    raw=await llm.completion(
+        user_message=ocr_result,
+        model_name="qwen-flash",
+        system_prompt=system_prompt,
+        temperature=0.2,
+    )
+    json_result=llm.parse_pet_translate_json(raw)
+    print(json_result)
+    result=TranslatorResult(
+        explanation=json_result.get('explanation'),
+        suggestions=json_result.get('suggestion'),
+        termExcerpts=json_result.get('termExcerpts')
+    )
     return AIResponse(
         code=200,
         message="翻译完成",
-        data=TranslatorResult(
-            explanation="explanation",
-            suggestions=['123','123','123'],
-            termExcerpts="termExcerpts"
-        ).dict()
+        data=result.dict()
     )
 class MessageItem(BaseModel):
     role: str          # 'user' 或 'model'
