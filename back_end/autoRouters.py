@@ -20,7 +20,7 @@ from api.api_MembershipView import router as membership_router
 from api.api_MedicationView import router as medication_router
 from api.api_ProfileView import router as profile_router
 from api.api_CommunityHistoryView import router as community_history_router
-from ai_function.api_connection import router as ai_router
+# from ai_function.api_connection import router as ai_router
 
 # 统一暴露给 main.py
 all_routers = [
@@ -35,7 +35,7 @@ all_routers = [
     medication_router,
     profile_router,
     community_history_router,
-    ai_router
+    # ai_router
 ]
 # from fastapi import APIRouter
 # from .api.auto_register import register_api_routers

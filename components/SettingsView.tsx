@@ -1,13 +1,13 @@
 import React from 'react';
-import { 
-  ChevronLeft, 
-  Moon, 
-  Sun, 
-  Bell, 
-  Globe, 
-  Shield, 
-  Smartphone, 
-  Trash2, 
+import {
+  ChevronLeft,
+  Moon,
+  Sun,
+  Bell,
+  Globe,
+  Shield,
+  Smartphone,
+  Trash2,
   ChevronRight,
   User,
   Info,
@@ -23,9 +23,10 @@ interface SettingsViewProps {
   onNavigate: (view: View, data?: any) => void;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
+  onLogout: () => void;
 }
 
-const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onNavigate, isDarkMode, onToggleDarkMode }) => {
+const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onNavigate, isDarkMode, onLogout, onToggleDarkMode }) => {
   const sections = [
     {
       title: '帳戶與通訊',
@@ -57,8 +58,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onNavigate, isDarkM
   return (
     <div className="h-full overflow-y-auto p-6 space-y-8 animate-in fade-in duration-500 pb-32 scrollbar-hide">
       <div className="flex items-center space-x-4">
-        <button 
-          onClick={onBack} 
+        <button
+          onClick={onBack}
           className="w-11 h-11 flex items-center justify-center glass rounded-full text-gray-600 dark:text-slate-100 shadow-sm border border-white/60 dark:border-white/10 floating-btn active:scale-90"
         >
           <ChevronLeft size={24} />
@@ -77,7 +78,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onNavigate, isDarkM
             <p className="text-[10px] text-gray-400 dark:text-slate-500 font-black uppercase tracking-widest">Appearance</p>
           </div>
         </div>
-        <button 
+        <button
           onClick={onToggleDarkMode}
           className={`w-14 h-8 rounded-full p-1 transition-colors duration-300 flex items-center ${isDarkMode ? 'bg-indigo-500 justify-end' : 'bg-gray-200 dark:bg-slate-700 justify-start'}`}
         >
@@ -92,7 +93,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onNavigate, isDarkM
             <h3 className="text-[11px] font-black text-gray-400 dark:text-slate-500 tracking-widest uppercase px-2">{section.title}</h3>
             <div className="glass rounded-[32px] overflow-hidden border border-white/40 dark:border-white/5 divide-y divide-white/10 dark:divide-white/5">
               {section.items.map((item, i) => (
-                <button 
+                <button
                   key={i}
                   onClick={item.onClick}
                   className="w-full flex items-center justify-between p-5 hover:bg-white/10 active:bg-gray-50 dark:active:bg-white/5 transition-colors"
@@ -116,12 +117,14 @@ const SettingsView: React.FC<SettingsViewProps> = ({ onBack, onNavigate, isDarkM
 
       {/* Danger Zone */}
       <div className="pt-4">
-        <button className="w-full py-5 flex items-center justify-center space-x-2 text-rose-500 font-black text-sm glass border-rose-100 dark:border-rose-900/30 rounded-[28px] floating-btn shadow-sm">
+        <button
+          onClick={onLogout}
+          className="w-full py-5 flex items-center justify-center space-x-2 text-rose-500 font-black text-sm glass border-rose-100 dark:border-rose-900/30 rounded-[28px] floating-btn shadow-sm">
           <LogOut size={20} />
           <span>切換帳號或登出</span>
         </button>
       </div>
-      
+
       <p className="text-center text-[10px] text-gray-300 dark:text-slate-700 font-black tracking-widest uppercase pt-4 italic">
         PawPal AI Pro · Stability Build 2025
       </p>

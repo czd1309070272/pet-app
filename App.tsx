@@ -270,7 +270,7 @@ const App: React.FC = () => {
       case View.MAP: return <MapView onBack={backFn} />;
       case View.COMMUNITY: return <CommunityView onBack={backFn} onNavigate={handleNavigate} initialOpenPost={triggerPostModal} onModalClose={() => setTriggerPostModal(false)} />;
       case View.PROFILE: return <ProfileView onBack={backFn} onNavigate={handleNavigate} appointments={appointments} onLogout={handleLogout} pets={pets} setPets={setPets} onUpdateUser={setUser} />;
-      case View.SETTINGS: return <SettingsView onBack={backFn} onNavigate={handleNavigate} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} />;
+      case View.SETTINGS: return <SettingsView onBack={backFn} onNavigate={handleNavigate} isDarkMode={isDarkMode} onLogout={handleLogout} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} />;
       case View.CALENDAR: return <CalendarView onBack={backFn} entries={entries} medications={medications} appointments={appointments} onDateClick={handleDateClick} />;
       case View.PET_PROFILE: return <PetProfileView onBack={backFn} initialPet={selectedPet} />;
       case View.MEDICATION: return <MedicationView onBack={backFn} medications={medications} setMedications={setMedications} pets={pets} filterDate={selectedDate} />;
