@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 import os
 import re
-from fastapi import APIRouter
 import jwt
+from fastapi import APIRouter
+from .tools.TokenTools import JWT_SECRET, JWT_EXPIRES_MIN, JWT_ALGORITHM, create_access_token
 from .schemas import JsonTool, LoginAccount, RegisterRequest
 from sql.mysql_DB import db
 import hashlib
@@ -14,15 +15,6 @@ logger = logging.getLogger(__name__)
 
 # 创建API路由器
 router = APIRouter()  # 使用APIRouter而不是FastAPI()
-
-JWT_SECRET = os.getenv("JWT_SECRET", "change_me")
-JWT_EXPIRES_MIN = int(os.getenv("JWT_EXPIRES_MIN", "1440"))
-JWT_ALGORITHM = "HS256"
-def create_access_token(payload: dict) -> str:
-    expires_at = datetime.utcnow() + timedelta(minutes=JWT_EXPIRES_MIN)
-    data = dict(payload)
-    data.update({"exp": expires_at})
-    return jwt.encode(data, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_user_field_type(username: str) -> str:
     """判断用户名是邮箱还是手机号"""
@@ -61,7 +53,7 @@ async def send_verification_code(request_data: LoginAccount):
         data={"username": request_data.username}
     )
 
-
+# 登录
 @router.post("/api/loginview/login", response_model=JsonTool)
 async def login(request: LoginAccount):
     logger.info("开始执行登录函数")
@@ -71,60 +63,46 @@ async def login(request: LoginAccount):
         
         logger.info(f"接收到的登录信息 - 用户名: {username}, 密码哈希: {password_hash}")
 
-        # 验证输入参数
         if not username or not password_hash:
             logger.warning("用户名或密码为空")
-            return JsonTool(
-                code=400,
-                msg="用户名和密码不能为空",
-                data=None
-            )
+            return JsonTool(code=400, msg="用户名和密码不能为空", data=None)
 
-        logger.info("用户名和密码不为空，继续处理")
-        
-        # 根据用户名类型查询用户信息
-        logger.info(f"查询数据库，用户名: {username}")
         sql = "SELECT * FROM users WHERE phone = %s OR email = %s"
         user = db.query_one(sql, (username, username))
         
-        logger.info(f"数据库查询结果: {user}")
-
         if not user:
             logger.warning("用户不存在")
-            return JsonTool(
-                code=401,
-                msg="用户不存在",
-                data=None
-            )
+            return JsonTool(code=401, msg="用户不存在", data=None)
 
-        logger.info("用户存在，验证密码")
-        
-        # 验证密码
         if user['password_hash'] != password_hash:
             logger.warning("密码错误")
-            return JsonTool(
-                code=401,
-                msg="密码错误",
-                data=None
-            )
+            return JsonTool(code=401, msg="密码错误", data=None)
         
-        logger.info("密码验证通过，检查 VIP 状态")
+        logger.info("密码验证通过")
 
-        # === 新增：VIP 过期检查与自动降级 ===
+        # ✅【关键】先完成认证核心逻辑
         user_id = user['id']
+        current_token_version = user.get('token_version', 0)
+        new_token_version = current_token_version + 1
+        db.execute("UPDATE users SET token_version = %s WHERE id = %s", (new_token_version, user_id))
+        token = create_access_token(
+            {"sub": username, "user_id": user_id},
+            token_version=new_token_version
+        )
+        logger.info("Token 已生成，处理附加业务逻辑")
+
+        # === VIP 过期检查（附加逻辑，不影响登录）===
         vip_expiry = user.get('vip_expiry')
         vip_level = user.get('vip_level')
-
         should_update_vip = False
         now = datetime.now()
 
         if vip_expiry and vip_level and vip_level != "NONE":
-            # 尝试解析 expiry
             if isinstance(vip_expiry, str):
                 try:
                     expiry_dt = datetime.strptime(vip_expiry, '%Y-%m-%d %H:%M:%S')
                 except ValueError:
-                    logger.warning(f"用户 {user_id} 的 vip_expiry 格式无效: {vip_expiry}，视为过期")
+                    logger.warning(f"用户 {user_id} 的 vip_expiry 格式无效，视为过期")  # ← 不打印具体值
                     should_update_vip = True
                 else:
                     if expiry_dt <= now:
@@ -133,22 +111,17 @@ async def login(request: LoginAccount):
                 if vip_expiry <= now:
                     should_update_vip = True
             else:
-                # 非字符串也非 datetime，视为无效，降级
                 should_update_vip = True
 
-        # 如果需要降级，更新数据库
         if should_update_vip:
             logger.info(f"用户 {user_id} VIP 已过期，正在降级为 NONE")
             db.execute(
                 "UPDATE users SET vip_level = 'NONE', vip_expiry = NULL WHERE id = %s",
                 (user_id,)
             )
-            # 更新内存中的 user 数据，用于返回
             user['vip_level'] = 'NONE'
             user['vip_expiry'] = None
         # === VIP 检查结束 ===
-
-        logger.info("构建登录成功响应")
 
         return JsonTool(
             code=200,
@@ -161,21 +134,19 @@ async def login(request: LoginAccount):
                 "phone": user.get('phone'),
                 "avatar_url": user.get('avatar_url'),
                 "gender": user.get("gender"),
-                "vip_level": user.get("vip_level"),      # 可能已是 'NONE'
-                "vip_expiry": user.get("vip_expiry"),    # 可能已是 None
+                "vip_level": user.get("vip_level"),
+                "vip_expiry": user.get("vip_expiry"),
                 "level": user.get("level"),
                 "google_id": user.get("google_id"),
                 "apple_id": user.get("apple_id"),
+                "token": token,
+                "expires_in": JWT_EXPIRES_MIN * 60
             }
         )
     except Exception as e:
         logger.error(f"登录过程中发生异常: {str(e)}", exc_info=True)
-        return JsonTool(
-            code=500,
-            msg="登录失败，请稍后再试",
-            data=None
-        )
-    
+        return JsonTool(code=500, msg="登录失败，请稍后再试", data=None)    
+
 # 定义一个重置密码的api
 @router.post("/api/loginview/reset_password", response_model=JsonTool)
 async def reset_password(request_data: LoginAccount):
@@ -245,115 +216,91 @@ async def reset_password(request_data: LoginAccount):
 async def register(request_data: RegisterRequest):
     logger.info("开始执行注册函数")
     try:
-        username = request_data.username # 用户名，可以是邮箱或手机号
-        nickname = request_data.nickname  # 昵称
-        password_hash = request_data.password_hash # 密码哈希
+        username = request_data.username
+        nickname = request_data.nickname
+        password_hash = request_data.password_hash
         
         logger.info(f"接收到的注册信息 - 用户名: {username}, 昵称: {nickname}")
         
-        # 1. 验证输入参数是否为空
+        # 1. 验证输入参数
         if not username or not nickname or not password_hash:
             logger.warning("用户名、昵称或密码为空")
-            return JsonTool(
-                code=400,
-                msg="用户名、昵称、密码不能为空",
-                data=None
-            )
+            return JsonTool(code=400, msg="用户名、昵称、密码不能为空", data=None)
         
-        logger.info("输入参数不为空，验证用户名格式")
-        
-        # 2. 校验 username 格式
+        # 2. 校验格式
         if not verify_username_format(username):
             logger.warning("用户名格式错误")
-            return JsonTool(
-                code=400,
-                msg="用户名格式错误",
-                data=None
-            )
+            return JsonTool(code=400, msg="用户名格式错误", data=None)
 
-        logger.info("用户名格式验证通过，检查是否已存在")
-        
-        # 3. 根据用户名类型查询数据库，检查是否已存在
-        sql = "select * from users where email=%s or phone=%s"
-        logger.info(f"执行查询SQL: {sql}，参数: ({username}, {username})")
-        user = db.query_one(sql, (username, username))
-        if user:
+        # 3. 检查是否已存在
+        sql_check = "SELECT id FROM users WHERE email = %s OR phone = %s"
+        existing_user = db.query_one(sql_check, (username, username))
+        if existing_user:
             logger.warning("用户已存在")
-            return JsonTool(
-                code=409,
-                msg="该邮箱或手机号已存在",
-                data=None
-            )
+            return JsonTool(code=409, msg="该邮箱或手机号已存在", data=None)
         
-        logger.info("用户名未存在，可以注册")
-        
-        # 4. 根据用户名类型插入新用户
+        logger.info("用户名未存在，准备插入新用户")
+
+        # 4. 确定字段类型并构建插入语句（不包含 token！）
         field_type = get_user_field_type(username)
-        logger.info(f"用户名字段类型: {field_type}")
-        
         if field_type == "email":
-            sql = "INSERT INTO users (username,email, nickname, password_hash,created_at,token) VALUES (%s, %s, %s, %s, NOW(),%s)"
+            insert_sql = """
+                INSERT INTO users (username, email, nickname, password_hash, created_at)
+                VALUES (%s, %s, %s, %s, NOW())
+            """
         elif field_type == "phone":
-            sql = "INSERT INTO users (username,phone, nickname, password_hash,created_at,token) VALUES (%s, %s, %s, %s, NOW(),%s)"
+            insert_sql = """
+                INSERT INTO users (username, phone, nickname, password_hash, created_at)
+                VALUES (%s, %s, %s, %s, NOW())
+            """
         else:
-            # 理论上不会走到这里，因为 verify_username_format 已校验
             logger.error("不支持的用户名类型")
-            return JsonTool(code=400, msg="仅支持手机号或邮箱注册")
-        
-        logger.info(f"执行插入SQL: {sql}")
-        
-        # 生成 token
-        token = create_access_token({"sub": username, "user_id": 0})  # 临时 token，后续会更新
-        
-        # 执行插入操作
-        result = db.execute(sql, (username, username, nickname, password_hash, token))
-        logger.info(f"插入操作结果: {result}")
-        
-        # 如果插入成功，查询新插入的用户ID
-        if result > 0:
-            # 查询刚刚插入的用户信息（通过username查询）
-            if field_type == "email":
-                query_sql = "SELECT * FROM users WHERE email = %s"
-            elif field_type == "phone":
-                query_sql = "SELECT * FROM users WHERE phone = %s"
-            else:
-                query_sql = "SELECT * FROM users WHERE username = %s"
+            return JsonTool(code=400, msg="仅支持手机号或邮箱注册", data=None)
 
-            logger.info(f"查询新用户ID，SQL: {query_sql}，参数: ({username},)")
-            new_user = db.query_one(query_sql, (username,))
-            user_id = new_user['id'] if new_user else None
-            logger.info(f"获取到的新用户ID: {user_id}")
-            #  生成 token
-            token = create_access_token({"sub": username, "user_id": new_user['id']})
-            # 可选：将 token 存储在数据库
-            db.execute("UPDATE users SET token = %s WHERE id = %s", (token, user_id))
-        else:
-            user_id = None
-            logger.info("插入操作失败，用户ID为None")
+        # 5. 执行插入
+        result = db.execute(insert_sql, (username, username, nickname, password_hash))
+        if result <= 0:
+            logger.error("数据库插入失败")
+            return JsonTool(code=500, msg="注册失败，请稍后再试", data=None)
 
-        logger.info("构建注册成功响应")
+        # 6. 查询新用户（必须做，获取 id 和完整信息）
+        query_sql = "SELECT * FROM users WHERE username = %s"
+        new_user = db.query_one(query_sql, (username,))
+        if not new_user:
+            logger.error("注册成功但无法查询新用户")
+            return JsonTool(code=500, msg="注册异常", data=None)
+
+        user_id = new_user['id']
+        logger.info(f"新用户注册成功，ID: {user_id}")
+
+        # ✅【关键】注册时 token_version = 0（数据库默认值）
+        token = create_access_token(
+            {"sub": username, "user_id": user_id},
+            token_version=0  # ← 必须传！与登录逻辑一致
+        )
+
+        # 7. 返回响应（使用 new_user，不包含 token 字段）
         return JsonTool(
             code=200,
             msg="注册成功",
             data={
-                "user_id": user['id'],
-                "username": user['username'],
-                "nickname": user.get('nickname'),
+                "user_id": new_user['id'],
+                "username": new_user['username'],
+                "nickname": new_user.get('nickname'),
                 "email": new_user.get('email'),
                 "phone": new_user.get('phone'),
                 "avatar_url": new_user.get('avatar_url'),
                 "gender": new_user.get("gender"),
-                "vip_level": new_user.get("vip_level"),
+                "vip_level": new_user.get("vip_level") or "NONE",
                 "vip_expiry": new_user.get("vip_expiry"),
-                "level": new_user.get("level") or 1,  # 默认等级为1
+                "level": new_user.get("level") or 1,
                 "google_id": new_user.get("google_id"),
                 "apple_id": new_user.get("apple_id"),
+                "token": token,                          # ← 返回给前端
+                "expires_in": JWT_EXPIRES_MIN * 60       # ← 单位：秒
             }
         )
+
     except Exception as e:
-        logger.error(f"注册过程中发生异常: {str(e)}")
-        return JsonTool(
-            code=500,
-            msg=f"注册失败: {str(e)}",
-            data=None
-        )
+        logger.error(f"注册过程中发生异常: {str(e)}", exc_info=True)
+        return JsonTool(code=500, msg="注册失败，请稍后再试", data=None)    

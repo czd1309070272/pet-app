@@ -80,9 +80,10 @@ const DiscoveryView: React.FC<DiscoveryViewProps> = ({ onNavigate }) => {
         setProducts(pData);
         setCartCount(cartItems.reduce((acc, item) => acc + item.quantity, 0));
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.error('加载失败:', err);
-        }
+        // if (err.name !== 'AbortError') {
+
+        // }
+        console.error('加载失败:', err);
       } finally {
         if (!controller.signal.aborted) {
           setIsLoading(false);

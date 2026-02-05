@@ -9,6 +9,7 @@ import os
 from datetime import datetime, time, timedelta
 from .schemas import DeleteCarts, DiscoveryBuildOrder,CartItem, DiscoveryBuildCarts, DiscoveryRequest, JsonTool, VipProfile
 from sql.mysql_DB import db
+from .tools.TokenTools import get_current_user_strict,decode_token_for_auth
 
 # 创建API路由器
 router = APIRouter()
@@ -22,15 +23,27 @@ VIP_LEVEL_RANK = {
 @router.post("/api/membershipview/open_vip", response_model=JsonTool)
 async def open_vip(request_data: VipProfile):
     try:
-        user_id = request_data.user_id
         pay_status = request_data.pay_status
         requested_combo = request_data.vip_combo
 
-        # 1. 验证用户是否存在
-        user_result = db.query_one("SELECT id FROM users WHERE id = %s", (user_id,))
-        if not user_result:
-            return JsonTool(code=400, msg="用户不存在", data=None)
+       # 解析 token
+        token = request_data.token
+        decoded = decode_token_for_auth(token)
+        user_id = decoded["user_id"]
+        claimed_token_version = decoded["token_version"]
+        # 一次性查询用户是否存在 + 当前 token_version
+        user_info = db.query_one(
+            "SELECT id, token_version FROM users WHERE id = %s", 
+            (user_id,)
+        )
+        if not user_info:
+            return JsonTool(code=401, msg="用户不存在", data=None)
 
+        # 关键：校验 token 版本是否匹配
+        if user_info["token_version"] != claimed_token_version:
+            return JsonTool(code=401, msg="登录状态已失效，请重新登录", data=None)
+
+        # === 以下逻辑保持不变 ===
         # 2. 检查支付是否成功
         if not pay_status:
             return JsonTool(code=400, msg="支付未成功，无法开通VIP", data=None)
@@ -119,6 +132,8 @@ async def open_vip(request_data: VipProfile):
             "level": full_user.get("level"),
             "google_id": full_user.get("google_id"),
             "apple_id": full_user.get("apple_id"),
+            # "token": "",          # ← 可选，视需求添加
+            # "expires_in": 0      # ← 可选，视需求添加
         }
 
         return JsonTool(
@@ -137,15 +152,24 @@ async def open_vip(request_data: VipProfile):
 @router.post("/api/membershipview/update_vip_status", response_model=JsonTool)
 def update_vip_status(request_data: VipProfile):
     try:
-        user_id = request_data.user_id
+        # user_id = request_data.user_id
+        # 解析 token
+        token = request_data.token
+        decoded = decode_token_for_auth(token)
+        user_id = decoded["user_id"]
+        claimed_token_version = decoded["token_version"]
 
         # 1. 验证用户是否存在
         user_result = db.query_one(
-            "SELECT id, is_vip, vip_expire_time FROM users WHERE id = %s", (user_id,)
+            "SELECT id, is_vip, vip_expire_time,token_version FROM users WHERE id = %s", (user_id,)
         )
         if not user_result:
             print(f"用户验证失败，用户ID: {user_id} 不存在")
             return JsonTool(code=400, msg="用户不存在", data=None)
+
+        # 关键：校验 token 版本是否匹配
+        if user_result["token_version"] != claimed_token_version:
+            return JsonTool(code=401, msg="登录状态已失效，请重新登录", data=None)
 
         # 2. 检查是否需要更新VIP状态（仅当 is_vip=1 且有过期时间时才检查）
         is_vip = bool(user_result.get("is_vip"))

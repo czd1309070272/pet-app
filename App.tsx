@@ -90,6 +90,7 @@ const App: React.FC = () => {
       setIsLoading(true);
       try {
         const currentUser = await backend.getCurrentUser();
+        console.log('Current user:', currentUser);
         if (currentUser) {
           setUser(currentUser);
           setIsLoggedIn(true);

@@ -523,7 +523,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
           return;
         }
 
-        const rootId = fullTargetComment.top_comment_id || fullTargetComment.id;
+        const rootId = fullTargetComment.top_comment_id || null; // 如果有 top_comment_id 就用它，否则说明它自己就是顶级评论
 
         console.log('准备添加回复，参数:', {
           postId: expandedPost.id,
@@ -546,7 +546,8 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
         }
 
         // ✅ 统一使用 addComments 添加子评论
-        addComments(effectiveReplyTarget.id, [reply]);
+        // addComments(Number(effectiveReplyTarget.id), [reply]);
+        addComments(Number(rootId), [reply]);
 
         setReplyingTo(null);
         setNewComment('');
@@ -739,26 +740,34 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
       return (
         <div className={`grid ${gridCols} gap-1.5 mt-3 pr-4`}>
           {images.map((img, idx) => (
-            <div key={idx} className="aspect-square rounded-lg overflow-hidden border border-gray-100 dark:border-white/5" onClick={(e) => { e.stopPropagation(); onImageClick(img); }}>
-              {img.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (  // 检查是否为视频文件
-                <div className="relative w-full h-full">
-                  <video
-                    src={`${url_base}${img}`}
-                    className="w-full h-full object-cover cursor-zoom-in active:scale-95 transition-transform"
-                    controls={false}
-                    muted
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center opacity-80">
-                      <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
+            <div
+              key={idx}
+              className="aspect-square rounded-lg overflow-hidden border border-gray-100 dark:border-white/5"
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log('[ImageGrid - Detail] 点击的媒体 URL:', img); // 👈 日志
+                console.log("url_base", url_base);
+                onImageClick(img);
+              }}
+            >  {img.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (  // 检查是否为视频文件
+              <div className="relative w-full h-full">
+                <video
+                  src={`${url_base}${img}`}
+                  className="w-full h-full object-cover cursor-zoom-in active:scale-95 transition-transform"
+                  controls={false}
+                  muted
+                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center opacity-80">
+                    <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
                   </div>
                 </div>
-              ) : (
-                <img src={`${url_base}${img}`} className="w-full h-full object-cover cursor-zoom-in active:scale-95 transition-transform" alt={`post-grid-${idx}`} />
-              )}
+              </div>
+            ) : (
+              <img src={`${url_base}${img}`} className="w-full h-full object-cover cursor-zoom-in active:scale-95 transition-transform" alt={`post-grid-${idx}`} />
+            )}
             </div>
           ))}
         </div>
@@ -776,7 +785,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
             <div
               key={idx}
               className="aspect-square rounded-lg overflow-hidden border border-gray-100 dark:border-white/5 relative group active:scale-95 transition-transform"
-              onClick={(e) => { e.stopPropagation(); onImageClick(`${url_base}${img}`); }}
+              onClick={(e) => { e.stopPropagation(); onImageClick(`${img}`); }}
             >
               {img.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (  // 检查是否为视频文件
                 <div className="relative w-full h-full">
@@ -1026,32 +1035,36 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
                     <div className="flex items-center space-x-8 mt-4">
                       <button className="flex items-center space-x-1 text-gray-400 hover:text-orange-500"><Share2 size={16} /><span className="text-[10px] font-black">分享</span></button>
                       <button className="flex items-center space-x-1 text-gray-400 hover:text-blue-500"><MessageCircle size={16} /><span className="text-[10px] font-black">{post.comments}</span></button>
-                      <button
+                      <button className={`flex items-center space-x-1 transition-all active:scale-125 ${post.isLiked ? 'text-rose-500' : 'text-gray-400'}`}><Heart size={16} fill={post.isLiked ? "currentColor" : "none"} strokeWidth={post.isLiked ? 0 : 2} /><span className="text-[10px] font-black">{post.likes}</span></button>
+                      {/* <button
                         onClick={(e) => handleLike(post.id, e)}
                         className={`flex items-center space-x-1 transition-all active:scale-125 ${post.isLiked ? 'text-rose-500' : 'text-gray-400'}`}
                       >
                         <Heart size={16} fill={post.isLiked ? "currentColor" : "none"} strokeWidth={post.isLiked ? 0 : 2} />
                         <span className="text-[10px] font-black">{post.likes}</span>
-                      </button>
+                      </button> */}
                     </div>
                   </div>
                 </div>
               ))}
 
               {/* 👇 上拉加载哨兵 */}
-              {!isLoading && hasMore && <div ref={sentinelRef} className="h-px" />}
+              {!isLoading && hasMore && <div ref={sentinelRef} className="h-px z-10 opacity-0 dark:bg-slate-900" />}
               {/* 加载中指示器 */}
               {isLoading && !isRefreshing && (
-                <div className="py-6 flex justify-center">
-                  <Loader2 className="animate-spin text-orange-500" size={20} />
+                <div className="h-full flex items-center justify-center">
+                  <div className="py-6 flex items-center justify-center text-blue-500">
+                    <Loader2 className="animate-spin text-blue-500 mr-2" size={20} />
+                    正在加載請稍後...
+                  </div>
                 </div>
               )}
               {/* 没有更多内容提示 */}
-              {/* {!hasMore && !isLoading && (
-                <div className="py-4 text-center text-gray-500 text-sm">
-                  没有更多内容了
+              {!hasMore && !isLoading && (
+                <div className="py-4 text-center text-blue-500 text-sm">
+                  沒有更多内容了
                 </div>
-              )} */}
+              )}
             </div>
           )}
         </div>
@@ -1285,23 +1298,41 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
         </div>
       )}
 
-      {
-        viewingImage && (
-          <div className="fixed inset-0 z-[200] bg-black flex items-center justify-center animate-fade-in" onClick={() => setViewingImage(null)}>
-            <button className="absolute top-8 right-6 text-white w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full"><X size={24} /></button>
-            {viewingImage.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (  // 检查是否为视频文件
+      {viewingImage && typeof viewingImage === 'string' && (
+        <>
+          {/* 全屏背景 + 媒体 */}
+          <div
+            className="fixed inset-0 z-[200] bg-black flex items-center justify-center animate-fade-in"
+            onClick={() => setViewingImage(null)}
+          >
+            {viewingImage.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (
               <video
-                src={viewingImage}
+                src={`${url_base}${viewingImage}`}
                 className="max-w-full max-h-full object-contain animate-zoom-in"
                 controls
                 onClick={(e) => e.stopPropagation()}
               />
             ) : (
-              <img src={`${url_base}${viewingImage}`} className="max-w-full max-h-full object-contain animate-zoom-in" alt="Fullscreen View" />
+              <img
+                src={`${url_base}${viewingImage}`}
+                className="max-w-full max-h-full object-contain animate-zoom-in"
+                alt="Fullscreen View"
+              />
             )}
           </div>
-        )
-      }
+
+          {/* ✅ 关闭按钮单独一层，确保可点击 */}
+          <button
+            className="fixed top-8 right-6 z-[201] text-white w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full"
+            onClick={(e) => {
+              e.stopPropagation();
+              setViewingImage(null);
+            }}
+          >
+            <X size={24} />
+          </button>
+        </>
+      )}
 
       {
         showCreateModal && (

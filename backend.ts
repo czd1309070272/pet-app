@@ -103,6 +103,8 @@ export const login = async (username: string, password: string): Promise<UserInf
           googleBound: dat.google_id ? true : false,
           appleBound: dat.apple_id ? true : false,
           level: dat.level,
+          token: dat.token,
+          Expires_in: dat.expires_in
         };
         activeUser = activeUser1;
         console.log("构建的用户信息对象:", activeUser);
@@ -173,11 +175,16 @@ export const register = async (username: string, password: string, regType: stri
           gender: '保密',
           googleBound: false,
           appleBound: false,
-          level: 1
+          level: 1,
+          token: dat.token,
+          Expires_in: dat.expires_in
         };
         console.log("构建的用户信息对象:", activeUser);
         return activeUser;
       }
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
       console.error("注册失败:", data.msg || '注册失败');
       throw new Error(data.msg || '注册失败');
@@ -248,9 +255,12 @@ export const getCurrentUser = async (): Promise<UserInfo | null> => {
   await delay(500); // 模拟延迟（仅开发环境建议保留）
 
   const userInfo = GetDataFromCookie('UserInfo');
-  if (!userInfo) {
-    return null;
-  }
+
+  const token = userInfo.token;
+  if (!token || token == "") return null;
+
+  if (!userInfo) return null;
+
   // 检查 VIP 是否过期
   const { vipExpiry } = userInfo;
   let isExpired = false;
@@ -264,7 +274,7 @@ export const getCurrentUser = async (): Promise<UserInfo | null> => {
   // 🔒 如果 VIP 已过期，强制登出
   if (isExpired) {
     console.log('VIP 已过期，强制登出用户');
-    logout(); // 执行登出逻辑
+    await logout(); // 执行登出逻辑
     return null;
   }
   // 未过期，正常返回
@@ -280,11 +290,118 @@ export const updateUserProfile = async (data: Partial<UserInfo>): Promise<UserIn
   return activeUser!;
 };
 
+// ... existing code ...
 export const logout = async (): Promise<void> => {
   await delay(500);
+
+  // 重置用户信息
   activeUser = null;
   RemoveCookie('UserInfo');
+
+  // 重置社区相关状态
+  community_request_offset = 1;
+  community_request_limit = 3;
+  discovery_carts_request_offset = 1;
+  discovery_carts_request_limit = -1;
+  orders_request_offset = 1;
+  orders_request_limit = 10;
+  orders_last_statues = "ALL";
+
+  // 重置购物车
+  mockCart = [];
+
+  // 重置帖子数据
+  mockPosts = [
+    {
+      id: 1,
+      author: '貓貓教主',
+      avatar: 'https://picsum.photos/seed/u1/100',
+      time: '2小時前',
+      content: '今天天氣真好，帶主子出來曬太陽！#日常 #曬貓',
+      fullContent: '今天天氣真好，帶主子出來曬太陽！#日常 #曬貓 \n\n 陽光灑在毛髮上金光閃閃的，太好看了！',
+      images: ['https://picsum.photos/seed/p1/400', 'https://picsum.photos/seed/p2/400'],
+      likes: 128,
+      comments: 32,
+      isLiked: false,
+      isVIP: true,
+      vipLevel: 'SVIP',
+      userTags: ['#日常', '#曬貓'],
+      commentList: [
+        { id: 'c1', author: '路人甲', avatar: 'https://picsum.photos/seed/u2/100', content: '好可愛的貓貓！', time: '1小時前', likes: 5, isLiked: false }
+      ]
+    }
+  ];
+
+  // 重置日记条目
+  mockEntries = [
+    { id: 'd1', date: '2025-03-24', content: '今天帶麻薯去公園玩，它好像很喜歡追蝴蝶。', style: '台式療癒風', imageUrl: 'https://picsum.photos/seed/diary1/400/300' },
+    { id: 'd2', date: '2025-03-22', content: '豆腐偷吃了桌上的麵包，被我發現後一臉無辜。', style: '幽默風' }
+  ];
+
+  // 重置宠物数据
+  mockPets = [
+    { id: 'p1', name: '麻薯', breed: '布偶貓', avatar: 'https://picsum.photos/seed/cat1/200', isMemorial: false, gender: '小公主', birthday: '2021-05-20', hobbies: '睡覺, 吃罐頭' },
+    { id: 'p2', name: '豆腐', breed: '比熊', avatar: 'https://picsum.photos/seed/dog1/200', isMemorial: false, gender: '小王子', birthday: '2022-08-15', hobbies: '追球, 散步' },
+    { id: 'p3', name: '糯米', breed: '英短', avatar: 'https://picsum.photos/seed/cat2/200', isMemorial: true, gender: '小天使', birthday: '2015-02-10', hobbies: '曬太陽', memorialDate: '2024-01-10' },
+  ];
+
+  // 重置相册
+  mockAlbum = [
+    { id: 'ph1', url: 'https://picsum.photos/seed/album1/400', category: 'DAILY', date: '2025-03-20' },
+    { id: 'ph2', url: 'https://picsum.photos/seed/album2/400', category: 'TRAVEL', date: '2025-03-18' }
+  ];
+
+  // 重置地址
+  mockAddresses = [
+    { id: '1', receiverName: '陳大萌', phone: '13800138000', area: '中西區', detail: '皇后大道中100號', isDefault: false, label: 'HOME' },
+    { id: '2', receiverName: '陳大萌', phone: '13800138000', area: '中w區', detail: '皇后大道中100號', isDefault: true, label: 'HOME' }
+  ];
+
+  // 重置文章
+  mockArticles = [
+    {
+      id: 'art1',
+      title: '貓咪飲水學問多：如何讓主子愛上喝水？',
+      summary: '貓咪天生耐渴，但飲水不足可能導致泌尿系統問題。本文教你 5 個實用的小技巧，改善家中飲水環境。',
+      content: '貓咪的祖先生活在沙漠環境中，這使得它們對乾渴的耐受度很高。然而，在現代家養環境下，主要食用乾糧的貓咪如果飲水量不足，非常容易誘發腎臟和泌尿系統疾病。\n\n1. 水源新鮮度：貓咪對流動的水更有興趣，這也是為什麼自動飲水機如此受歡迎的原因。\n\n2. 容器選擇：陶瓷或不銹鋼材質比塑料更好，不會殘留細菌異味，且寬大的容器能避免鬍鬚觸碰邊緣。',
+      coverImage: 'https://picsum.photos/seed/catwater/800/600',
+      author: 'PawPal 營養師',
+      date: '2025-03-25',
+      category: '健康守護',
+      readTime: '4 min',
+      likes: 245
+    },
+    {
+      id: 'art2',
+      title: '春季寵物驅蟲指南：全方位防護建議',
+      summary: '氣溫回升，寄生蟲也開始活躍。不管是足不出戶的貓咪還是每天散步的狗狗，都需要科學的驅蟲計劃。',
+      content: '春天是萬物復甦的季節，同時也是跳蚤、蜱蟲和心絲蟲的高發期。\n\n首先要明確的是，即使是室內貓，主人也可能通過衣物將外部蟲卵帶回家。因此，每個月定期的體外和體內驅蟲是必不可少的。',
+      coverImage: 'https://picsum.photos/seed/petbug/800/600',
+      author: '林醫生',
+      date: '2025-03-22',
+      category: '護理科普',
+      readTime: '6 min',
+      likes: 189
+    },
+    {
+      id: 'art3',
+      title: '解密狗狗的「語言」：它在想什麼？',
+      summary: '搖尾巴並不總是代表開心。學會觀察尾巴高度、耳根位置，讀懂毛孩子的真實情緒。',
+      content: '作為主人，我們常以為自己很了解寵物，但有時我們會誤讀它們的訊號。例如，高頻率的快速擺尾有時是焦慮或興奮的體現，而非單純的友善。',
+      coverImage: 'https://picsum.photos/seed/doglang/800/600',
+      author: '行為訓練師',
+      date: '2025-03-20',
+      category: '行為解析',
+      readTime: '5 min',
+      likes: 312
+    }
+  ];
+
+  // 重置订单
+  mockOrders = [];
 };
+
+// ... existing code ...
 
 // --- Pets ---
 let mockPets: PetProfile[] = [
@@ -296,11 +413,12 @@ let mockPets: PetProfile[] = [
 export const fetchPets = async (): Promise<PetProfile[]> => {
   console.log('开始获取宠物信息');
   try {
-    let user_id = activeUser?.id;
-    console.log('当前用户ID:', user_id);
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
+    console.log('当前用户Token:', token);
 
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: "",
       name: "",
       breed: "",
@@ -331,7 +449,11 @@ export const fetchPets = async (): Promise<PetProfile[]> => {
       let pets = data.data.pets;
       console.log('成功获取到的宠物数量:', pets.length);
       return pets;
-    } else {
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
+    }
+    else {
       console.log('请求失败，错误代码:', data.code);
     }
   } catch (error) {
@@ -343,9 +465,10 @@ export const fetchPets = async (): Promise<PetProfile[]> => {
 
 export const addPet = async (pet: PetProfile): Promise<PetProfile> => {
   try {
-    let user_id = activeUser?.id;
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: pet.id ? pet.id : "",
       name: pet.name,
       breed: pet.breed ? pet.breed : "",
@@ -367,6 +490,9 @@ export const addPet = async (pet: PetProfile): Promise<PetProfile> => {
     if (data.code == 200) {
       let result = data.data.pet;
       return result;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
   } catch (error) {
     console.error('添加宠物请求失败:', error);
@@ -380,9 +506,10 @@ export const fetchPetProfile = async (pet_id: number): Promise<PetProfile | null
   try {
     await delay(500);
     // return mockPets[0]; // Default return first pet
-    let user_id = activeUser?.id;
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: pet_id,
       name: "",
       breed: "",
@@ -404,6 +531,9 @@ export const fetchPetProfile = async (pet_id: number): Promise<PetProfile | null
     if (data.code == 200) {
       let pets = data.data.pet;
       return pets;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
   } catch (error) {
     console.error('获取具体宠物请求失败:', error);
@@ -417,9 +547,10 @@ export const updatePetProfile = async (pet: PetProfile): Promise<PetProfile | nu
   try {
     // await delay(500);
     // return mockPets[0]; // Default return first pet
-    let user_id = activeUser?.id;
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: pet.id,
       name: pet.name,
       breed: pet.breed,
@@ -441,6 +572,9 @@ export const updatePetProfile = async (pet: PetProfile): Promise<PetProfile | nu
     if (data.code == 200) {
       let pets = data.data.pet;
       return pets;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
@@ -452,10 +586,11 @@ export const updatePetProfile = async (pet: PetProfile): Promise<PetProfile | nu
 
 export const updatePetWeight = async (weight: number, pet_id: number): Promise<WeightEntry[]> => {
   try {
-    let user_id = activeUser?.id;
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
     let timedate = new Date().toISOString().split('T')[0];
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: pet_id,
       weight: weight,
       date: timedate
@@ -474,6 +609,9 @@ export const updatePetWeight = async (weight: number, pet_id: number): Promise<W
       // Add new weight entry
       // return fetchWeightHistory().then(history => [...history, { date: pets.date, pets.weight }]);
       return pets;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
@@ -487,11 +625,12 @@ export const moveToMemorial = async (petId: string): Promise<PetProfile | null> 
   try {
     // await delay(500);
     // return mockPets[0]; // Default return first pet
-    let user_id = activeUser?.id;
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
     await delay(800);
     let memorial_date = new Date().toISOString().split('T')[0];
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: petId,
       name: "",
       breed: "",
@@ -518,6 +657,9 @@ export const moveToMemorial = async (petId: string): Promise<PetProfile | null> 
       //   return pet;
       // }
       return data.data.pet;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
@@ -600,9 +742,10 @@ export const fetchAppointments = async (): Promise<Appointment[]> => {
 
 export const fetchWeightHistory = async (petId: string): Promise<WeightEntry[]> => {
   try {
-    let user_id = activeUser?.id;
+    // let user_id = activeUser?.id;
+    let token = activeUser?.token;
     let request_data = {
-      user_id: user_id,
+      token: token,
       id: petId,
       weight: 0,
       date: ""
@@ -618,6 +761,9 @@ export const fetchWeightHistory = async (petId: string): Promise<WeightEntry[]> 
     if (data.code == 200) {
       let pets = data.data.weightHistory;
       return pets;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
@@ -699,14 +845,15 @@ export const fetchCommunityPostDetail = async (postId: number, topLimit: number,
   // Return deep copy to prevent reference sharing issues with frontend state
   // 每次获取3个帖子
   try {
-    var userid = activeUser?.id || 'me';
+    // var userid = activeUser?.id || 'me';
+    let token = activeUser?.token;
     const requestBody = {
-      user_id: userid,
+      token: token,
       post_id: postId,
       top_limit: topLimit,
       replies_limit: repliesLimit
     }
-    console.log("开始获取社区帖子，用户ID:", userid);
+    console.log("开始获取社区帖子，token:", token);
     const response = await fetch(url_base + "/communityview/get_post_detail", {
       method: 'POST',
       headers: {
@@ -724,6 +871,10 @@ export const fetchCommunityPostDetail = async (postId: number, topLimit: number,
         console.log("获取社区帖子成功，帖子数量:", dat.post ? dat.post.length : 0);
         return dat.post; // 返回后端返回的帖子数组
       }
+    } else if (data.code === 401) {
+      console.log("获取社区帖子失败，登录状态已过期:", data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.log("获取社区帖子失败:", data.msg);
       throw new Error(data.msg || '获取失败');
@@ -739,15 +890,16 @@ export const fetchCommunityPostDetail = async (postId: number, topLimit: number,
 
 export const fetchCommunityComments = async (postId: number, timenode: string | null, limit: number, top_comment_id: string | null): Promise<Comment[]> => {
   try {
-    var userid = activeUser?.id || 'me';
+    // var userid = activeUser?.id || 'me';
+    let token = activeUser?.token;
     const requestBody = {
-      user_id: userid,
+      token: token,
       post_id: postId,
       timenode: timenode,
       page_size: limit,
       top_comment_id: top_comment_id
     }
-    console.log("开始获取社区帖子，用户ID:", userid);
+    console.log("开始获取社区帖子评论，token:", token);
     const response = await fetch(url_base + "/communityview/get_comment_tree", {
       method: 'POST',
       headers: {
@@ -765,8 +917,12 @@ export const fetchCommunityComments = async (postId: number, timenode: string | 
         console.log("获取社区帖子成功，帖子数量:", dat.comments ? dat.comments.length : 0);
         return dat.comments; // 返回后端返回的帖子数组
       }
+    } else if (data.code === 401) {
+      console.log("获取社区帖子评论失败，登录状态已过期:", data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
-      console.log("获取社区帖子失败:", data.msg);
+      console.log("获取社区帖子评论失败:", data.msg);
       throw new Error(data.msg || '获取失败');
     }
   } catch (e) {
@@ -781,15 +937,17 @@ export const fetchCommunityPostsByTime = async (datatype: string, timenode: stri
   // Return deep copy to prevent reference sharing issues with frontend state
   // 每次获取3个帖子
   try {
-    var userid = activeUser?.id || 'me';
+    // var userid = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    console.log("开始获取社区帖子，token:", token);
     const requestBody = {
-      user_id: userid,
+      token: token,
       limit: limit,
       timenode: timenode,
       exclude_post_ids: [],
       datatype: datatype
     }
-    console.log("开始获取社区帖子，用户ID:", userid);
+    console.log("开始获取社区帖子，token:", token);
     const response = await fetch(url_base + "/communityview/get_community_posts_by_time", {
       method: 'POST',
       headers: {
@@ -807,6 +965,10 @@ export const fetchCommunityPostsByTime = async (datatype: string, timenode: stri
         console.log("获取社区帖子成功，帖子数量:", dat.posts ? dat.posts.length : 0);
         return dat.posts; // 返回后端返回的帖子数组
       }
+    } else if (data.code === 401) {
+      console.log("获取社区帖子失败，登录状态已过期:", data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.log("获取社区帖子失败:", data.msg);
       throw new Error(data.msg || '获取失败');
@@ -824,14 +986,15 @@ export const fetchCommunityPosts = async (): Promise<Post[]> => {
   // Return deep copy to prevent reference sharing issues with frontend state
   // 每次获取3个帖子
   try {
-    var userid = activeUser?.id || 'me';
+    // var userid = activeUser?.id || 'me';
+    let token = activeUser?.token;
     const requestBody = {
-      user_id: userid || 'me',
+      token: token,
       num: community_request_limit,
       offset: community_request_offset,
       exclude_post_ids: []  // 暂时不排除任何帖子
     };
-    console.log("开始获取社区帖子，用户ID:", userid);
+    console.log("开始获取社区帖子，token:", token);
     const response = await fetch(url_base + "/communityview/get_community_posts", {  // 修正API端点
       method: 'POST',
       headers: {
@@ -850,6 +1013,11 @@ export const fetchCommunityPosts = async (): Promise<Post[]> => {
         console.log("获取社区帖子成功，帖子数量:", dat.posts ? dat.posts.length : 0);
         return dat.posts; // 返回后端返回的帖子数组
       }
+    } else if (data.code === 401) {
+      community_request_offset = community_request_offset - 1;
+      console.log("获取社区帖子失败，登录状态已过期:", data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       community_request_offset = community_request_offset - 1;
       console.log("获取社区帖子失败:", data.msg);
@@ -868,8 +1036,10 @@ export const uploadCommunityVideo = async (user_id: string, files: File[]): Prom
   try {
     // 创建 FormData 对象来发送文件
     const formData = new FormData();
+    let token = activeUser?.token;
     // 添加用户ID
-    formData.append('user_id', user_id ? user_id : 'me');
+    // formData.append('user_id', user_id ? user_id : 'me');
+    formData.append('token', token ? token : 'me');
     // 添加所有文件
     files.forEach((file, index) => {
       console.log('uploadCommunityVideo - 添加文件', index, file);
@@ -891,6 +1061,10 @@ export const uploadCommunityVideo = async (user_id: string, files: File[]): Prom
         console.log('uploadCommunityVideo - 响应数据内容:', dat);
         return dat.video_urls; // 返回后端返回的视频URL数组
       }
+    } else if (data.code === 401) {
+      console.log('uploadCommunityVideo - 后端响应失败，登录状态已过期:', data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.log('uploadCommunityVideo - 后端响应失败，错误信息:', data.msg);
       throw new Error(data.msg || '上传失败');
@@ -908,8 +1082,10 @@ export const uploadCommunityPhoto = async (user_id: string, files: File[]): Prom
   try {
     // 创建 FormData 对象来发送文件
     const formData = new FormData();
+    let token = activeUser?.token;
     // 添加用户ID
-    formData.append('user_id', user_id ? user_id : 'me');
+    // formData.append('user_id', user_id ? user_id : 'me');
+    formData.append('token', token ? token : 'me');
     // 添加所有文件
     files.forEach((file, index) => {
       console.log('uploadCommunityPhoto - 添加文件', index, file);
@@ -931,6 +1107,10 @@ export const uploadCommunityPhoto = async (user_id: string, files: File[]): Prom
         console.log('uploadCommunityPhoto - 响应数据内容:', dat);
         return dat.image_urls; // 返回后端返回的图片URL数组
       }
+    } else if (data.code === 401) {
+      console.log('uploadCommunityPhoto - 后端响应失败，登录状态已过期:', data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.log('uploadCommunityPhoto - 后端响应失败，错误信息:', data.msg);
       throw new Error(data.msg || '上传失败');
@@ -950,9 +1130,11 @@ export const uploadCommunityContent = async (user_id: string, content: string, f
     console.log('uploadCommunityContent - 准备发送请求到后端API...');
     await delay(1000);
     console.log('uploadCommunityContent - 发起fetch请求...', files);
+    let token = activeUser?.token;
     // 确保所有参数都符合后端期望的格式
     const requestBody = {
-      user_id: user_id || 'me',
+      // user_id: user_id || 'me',
+      token: token,
       content: content,
       images: Array.isArray(files) ? files : [],  // 确保是数组
       tags: Array.isArray(tags) ? tags : []      // 确保是数组
@@ -971,7 +1153,7 @@ export const uploadCommunityContent = async (user_id: string, content: string, f
 
     if (data.code === 200) {
       console.log('uploadCommunityContent - 后端响应成功，数据:', data.data);
-      const dat = data.data.post;
+      const dat = data.data;
       if (dat) {
         console.log('uploadCommunityContent - 响应数据内容:', dat);
         // 返回创建的帖子对象（模拟数据，实际应从后端响应中获取）
@@ -994,6 +1176,10 @@ export const uploadCommunityContent = async (user_id: string, content: string, f
         return newPost;
       }
       // throw new Error('上传失败');
+    } else if (data.code === 401) {
+      console.log('uploadCommunityContent - 后端响应失败，登录状态已过期:', data.msg);
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.log('uploadCommunityContent - 后端响应失败，错误信息:', data.msg);
       // return null;
@@ -1127,11 +1313,12 @@ export const toggleLikePost = async (postId: number): Promise<{ likes: number, i
   //   return { likes: post.likes, isLiked: post.isLiked };
   // }
   try {
-    var userId = activeUser?.id || 'me';
-    console.log('准备发送点赞请求，用户ID:', userId, '帖子ID:', postId);
+    // var userId = activeUser?.id || 'me';
+    var token = activeUser?.token || '';
+    console.log('准备发送点赞请求，token:', token, '帖子ID:', postId);
 
     let bodydata = {
-      user_id: userId,
+      token: token,
       target_id: postId,
       target_type: 'POST',
     }
@@ -1153,6 +1340,9 @@ export const toggleLikePost = async (postId: number): Promise<{ likes: number, i
         likes: data.data.likes || 0,
         isLiked: data.data.isLiked || false
       };
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       throw new Error(data.msg || '切换点赞状态失败');
     }
@@ -1171,13 +1361,14 @@ export const toggleLikePost = async (postId: number): Promise<{ likes: number, i
 export const addComment = async (postId: number, content: string): Promise<Comment> => {
   await delay(500);
   try {
-    var userId = activeUser?.id || 'me';
-    console.log("开始添加评论，参数:", { postId, content, userId });
+    // var userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    console.log("开始添加评论，参数:", { postId, content, token });
 
     let bodydata = {
       id: null,
       post_id: postId,
-      user_id: userId,
+      token: token,
       parent_id: null,      // 对于顶级评论，可以是 null 或 0
       reply_to_id: null,    // 可选参数
       content: content,
@@ -1217,6 +1408,9 @@ export const addComment = async (postId: number, content: string): Promise<Comme
         console.log("评论创建成功，返回新评论对象:", newComment);
         return newComment;
       }
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.error("评论失败，错误信息:", data.msg || '评论失败');
       throw new Error(data.msg || '评论失败');
@@ -1232,11 +1426,12 @@ export const toggleLikeComment = async (postId: number, commentId: string): Prom
   console.log('开始执行评论点赞操作，帖子ID:', postId, '评论ID:', commentId);
   await delay(300);
   try {
-    var userId = activeUser?.id || 'me';
-    console.log('准备发送评论点赞请求，用户ID:', userId, '帖子ID:', postId, '评论ID:', commentId);
+    // var userId = activeUser?.id || 'me';
+    var token = activeUser?.token || '';
+    console.log('准备发送评论点赞请求，用户ID:', token, '帖子ID:', postId, '评论ID:', commentId);
 
     let bodydata = {
-      user_id: userId,
+      token: token,
       target_id: commentId,
       target_type: 'COMMENT',
     }
@@ -1263,6 +1458,9 @@ export const toggleLikeComment = async (postId: number, commentId: string): Prom
         console.log("返回点赞数:", dat.like_count, "点赞状态:", dat.is_liked);
         return { likes: dat.like_count, isLiked: dat.is_liked };
       }
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error(data.msg || '登录状态已过期，请重新登录');
     } else {
       console.error("评论点赞失败，错误信息:", data.msg || '点赞失败');
       throw new Error(data.msg || '点赞失败');
@@ -1282,14 +1480,15 @@ export const toggleLikeComment = async (postId: number, commentId: string): Prom
 export const addReply = async (postId: number, commentId: string, content: string, root_id: string | null): Promise<Comment | null> => {
   await delay(500);
   try {
-    var userId = activeUser?.id || 'me';
-    console.log("开始添加回复，参数:", { postId, commentId, content, userId });
+    // var userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    console.log("开始添加回复，参数:", { postId, commentId, content, token, root_id });
 
     let bodydata = {
       id: null,
-      post_id: postId,
-      user_id: userId,
-      parent_id: commentId,      // 回复评论时，将目标评论ID作为parent_id
+      post_id: Number(postId),
+      token: token,
+      parent_id: Number(commentId),      // 回复评论时，将目标评论ID作为parent_id
       reply_to_id: null,         // 可选参数，可进一步指定被回复的用户ID
       content: content,
       root_id: String(root_id),
@@ -1312,7 +1511,7 @@ export const addReply = async (postId: number, commentId: string, content: strin
         // 根据后端返回的数据结构创建评论对象
         console.log("准备构建新回复对象 dat", dat);
         const newComment: Comment = {
-          id: dat.id.toString(),  // 后端返回的是数字，转为字符串
+          id: String(dat.id),  // 后端返回的是数字，转为字符串
           author: dat.author,
           avatar: dat.avatar,
           content: dat.content,
@@ -1321,10 +1520,15 @@ export const addReply = async (postId: number, commentId: string, content: strin
           isLiked: false,
           replyToName: dat.replyToName,
           replyToContent: dat.replyToContent,
+          top_comment_id: dat.top_comment_id,
         };
         console.log("回复创建成功，返回新回复对象:", newComment);
         return newComment;
       }
+    } else if (data.code === 401) {
+      console.warn("用户未登录或登录已过期:", data.msg);
+      await logout();
+      throw new Error("用户未登录或登录已过期");
     } else {
       console.error("回复失败，错误信息:", data.msg || '评论失败');
       throw new Error(data.msg || '评论失败');
@@ -1340,9 +1544,10 @@ export const addReply = async (postId: number, commentId: string, content: strin
 
 export const fetchCommunityHistory = async (type: string, limit: number, offset: number): Promise<CommunityHistoryItem[]> => {
   try {
-    let user_id = activeUser?.id || 'me';
+    // let user_id = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
     let request_data = {
-      user_id: user_id,
+      token: token,
       limit: limit,
       offset: offset,
     }
@@ -1401,7 +1606,8 @@ export const searchProducts = async (
   page: number,
   limit: number = 10,
 ): Promise<Product[]> => {
-  let user_id = activeUser?.id || 'me';
+  // let user_id = activeUser?.id || 'me';
+  let token = activeUser?.token || '';
   // 参数校验
   if (!keyword?.trim()) {
     return []; // 空关键词直接返回空数组，避免无效请求
@@ -1415,7 +1621,7 @@ export const searchProducts = async (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        user_id: user_id || null, // 后端允许为 null
+        token: token,
         keyword: keyword.trim(),
         pages: page,   // 注意：后端字段是 `pages`（复数）
         limit: limit,
@@ -1432,6 +1638,10 @@ export const searchProducts = async (
     // 根据你的后端返回结构：{ code, msg, data: { products: [...] } }
     if (data.code === 200 && Array.isArray(data.data?.products)) {
       return data.data.products;
+    } else if (data.code === 401) {
+      console.warn("用户未登录或登录已过期:", data.msg);
+      await logout();
+      throw new Error("用户未登录或登录已过期");
     } else {
       console.warn('搜索接口返回非预期格式:', data);
       return [];
@@ -1448,10 +1658,11 @@ export const fetchProducts = async (category?: string, offset?: number, limit?: 
   console.log("开始执行 fetchProducts 函数，参数 category:", category);
   await delay(500);
   try {
-    const userId = activeUser?.id || 'me';
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
     console.log("fetchProducts - offset:", offset);
     const bodydata = {
-      user_id: userId,
+      token: token,
       pages: offset,
       limit: limit,
       category: category,
@@ -1495,6 +1706,11 @@ export const fetchProducts = async (category?: string, offset?: number, limit?: 
       } else {
         return [];
       }
+    } else if (data.code === 401) {
+      console.warn("用户未登录或登录已过期:", data.msg);
+      await logout();
+      throw new Error("用户未登录或登录已过期");
+      // return [];
     } else {
       // console.error("请求失败，错误信息:", data.msg || '未知错误');
       return [];
@@ -1519,9 +1735,10 @@ export const fetchProductById = async (id: string): Promise<Product | null> => {
   // const products = await fetchProducts();
   // return products.find(p => p.id === id) || null;
   try {
-    const userId = activeUser?.id || 'me';
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
     const bodydata = {
-      user_id: userId,
+      token: token,
       product_id: id
     };
     console.log("准备发送请求到后端API，请求数据:", bodydata);
@@ -1562,7 +1779,12 @@ export const fetchProductById = async (id: string): Promise<Product | null> => {
         console.log("响应中没有产品数据");
         return null;
       }
-    } else {
+    } else if (data.code === 401) {
+      console.warn("用户未登录或登录已过期:", data.msg);
+      await logout();
+      throw new Error("用户未登录或登录已过期");
+    }
+    else {
       console.error("请求失败，错误信息:", data.msg || '未知错误');
       throw new Error(data.msg || '请求失败');
     }
@@ -1582,10 +1804,11 @@ export const fetchCart = async (options?: { signal?: AbortSignal }): Promise<Car
   console.log("开始执行 fetchCart 函数");
   await delay(500);
   try {
-    const userId = activeUser?.id || 'me';
-    console.log("fetchCart - 当前用户ID:", userId);
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
+    console.log("fetchCart - 当前用户token:", token);
     const bodydata = {
-      user_id: userId,
+      token: token,
       pages: discovery_carts_request_offset,
       limit: discovery_carts_request_limit,
       category: "",
@@ -1657,11 +1880,12 @@ export const addToCart = async (product: Product, quantity: number): Promise<voi
     });
   }
   try {
-    var userId = activeUser?.id || 'me';
-    console.log("addToCart 当前用户ID:", userId);
+    // var userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    console.log("addToCart 当前用户token:", token);
 
     let bodydata = {
-      user_id: userId,
+      token: token,
       product_id: String(product.productId),
       num: quantity
     }
@@ -1679,7 +1903,12 @@ export const addToCart = async (product: Product, quantity: number): Promise<voi
     console.log("解析后的响应数据:", data); // 显示完整的响应数据
     if (data.code === 200) {
       console.log("购物车响应成功"); // 成功回调中显示关键业务数据
-    } else {
+    } else if (data.code === 401) {
+      console.log("购物车响应失败，请检查参数");
+      await logout();
+      throw new Error('购物车响应失败，请检查参数');
+    }
+    else {
       console.error("请求失败，错误信息:", data.msg || '请求失败');
       throw new Error(data.msg || '请求失败');
     }
@@ -1732,11 +1961,12 @@ export const updateOrderStatus = async (order_id: string, payStatus: string): Pr
 };
 
 export const updateOrder = async (order: Order): Promise<string> => {
-  var userId = activeUser?.id || 'me';
-  if (!userId) {
-    throw new Error('用户未登录或 user_id 不存在');
+  // var userId = activeUser?.id || 'me';
+  let token = activeUser?.token;
+  if (!token) {
+    throw new Error('用户未登录或 token 不存在');
   }
-  const response = await fetch('/ordersview/update_discoveryview_userorder', {
+  const response = await fetch(url_base + '/ordersview/update_discoveryview_userorder', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1744,7 +1974,7 @@ export const updateOrder = async (order: Order): Promise<string> => {
       // 'Authorization': `Bearer ${getToken()}`
     },
     body: JSON.stringify({
-      user_id: userId,
+      token: token,
       order: order
     })
   });
@@ -1752,7 +1982,11 @@ export const updateOrder = async (order: Order): Promise<string> => {
   // 假设后端返回 { code, msg, data }
   if (result.code !== 200) {
     throw new Error(result.msg || '更新订单失败');
+  } else if (result.code === 401) {
+    await logout();
+    throw new Error(result.msg || '用户未登录或 token 不存在');
   }
+
   // 成功时返回订单 ID 或成功消息（根据你的需求）
   return result.data?.order_id || 'success';
 };
@@ -1765,8 +1999,6 @@ export const createOrderFromCart = async (items: CartItem[], address_id: string)
     await delay(1000);
     var userId = activeUser?.id || 'me';
     console.log("addToCart 当前用户ID:", userId);
-
-
 
     let bodydata = {
       user_id: userId,
@@ -1810,13 +2042,14 @@ export const fetchOrders = async (
   signal?: AbortSignal
 ): Promise<Order[]> => {
   try {
-    var userId = activeUser?.id || 'me';
+    // var userId = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
     const category = status ?? 'ALL';
     const response = await fetch(url_base + "/ordersview/get_discoveryview_userorder", {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_id: userId,
+        token: token,
         pages: page,
         limit: limit,
         category: category
@@ -1832,7 +2065,12 @@ export const fetchOrders = async (
         return dat
       }
       return []; // 修复：返回空数组而不是null
-    } else {
+    } else if (data.code === 401) {
+      console.error("订单请求失败，错误信息:", data.msg || '用户未登录');
+      await logout();
+      throw new Error(data.msg || '用户未登录');
+    }
+    else {
       console.error("订单请求失败，错误信息:", data.msg || '未知错误');
       return [];
     }
@@ -1854,7 +2092,8 @@ let mockAddresses: Address[] = [
 export const fetchAddresses = async (signal?: AbortSignal): Promise<Address[]> => {
   await delay(500);
   try {
-    const userId = activeUser?.id || 'me';
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
     // 注意：后端期望 user_id 作为请求体？但你的 Python 代码写的是 request_data: str
     var request_data = {
       id: "",
@@ -1864,7 +2103,7 @@ export const fetchAddresses = async (signal?: AbortSignal): Promise<Address[]> =
       detail: "",
       label: "",
       isDefault: false,
-      user_id: userId,
+      token: token,
     };
     // 根据你提供的后端代码，get_useraddress 的 request_data 是字符串形式的 user_id
     const response = await fetch(url_base + "/addressview/get_useraddress", {
@@ -1876,6 +2115,9 @@ export const fetchAddresses = async (signal?: AbortSignal): Promise<Address[]> =
     const data = await response.json();
     if (data.code === 200) {
       return data.data.addressList || [];
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
       throw new Error(data.msg || '获取地址失败');
     }
@@ -1888,7 +2130,8 @@ export const fetchAddresses = async (signal?: AbortSignal): Promise<Address[]> =
 export const saveAddress = async (addr: Address): Promise<Address> => {
   await delay(500);
   try {
-    const userId = activeUser?.id || 'me';
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
     let request_data = {
       id: String(addr.id), // 创建时可不传 id
       receiverName: addr.receiverName,
@@ -1897,7 +2140,7 @@ export const saveAddress = async (addr: Address): Promise<Address> => {
       detail: addr.detail,
       label: addr.label,
       isDefault: addr.isDefault,
-      user_id: userId,
+      token: token,
     };
     let endpoint = '';
     if (!addr.id || addr.id.trim() === '') {
@@ -1919,6 +2162,9 @@ export const saveAddress = async (addr: Address): Promise<Address> => {
       // 后端返回的是完整的 Address 对象（在 data 字段中）
       const savedAddr: Address = data.data;
       return savedAddr;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
       throw new Error(data.msg || '保存地址失败');
     }
@@ -1931,8 +2177,9 @@ export const saveAddress = async (addr: Address): Promise<Address> => {
 export const deleteAddress = async (id: string): Promise<void> => {
   await delay(300);
   try {
-    const userId = activeUser?.id || 'me';
-    if (!userId) throw new Error('未登录');
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    if (!token) throw new Error('未登录');
     let request_data = {
       id: String(id),
       receiverName: "",
@@ -1941,7 +2188,7 @@ export const deleteAddress = async (id: string): Promise<void> => {
       detail: "",
       label: "",
       isDefault: false,
-      user_id: userId,
+      token: token,
     };
     const url = `${url_base}/addressview/delete_useraddress`;
     const response = await fetch(url, {
@@ -1952,6 +2199,9 @@ export const deleteAddress = async (id: string): Promise<void> => {
     const data = await response.json();
     if (data.code !== 200) {
       throw new Error(data.msg || '删除地址失败');
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     }
     // 成功则无返回数据
   } catch (e) {
@@ -2002,8 +2252,9 @@ export const deleteAlbumPhoto = async (id: string): Promise<void> => {
 export const getAllMedication = async (): Promise<Medication[]> => {
   await delay(500);
   try {
-    const userId = activeUser?.id || 'me';
-    if (!userId) throw new Error('未登录');
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
+    if (!token) throw new Error('未登录');
     let request_data = {
       id: "",
       name: "",
@@ -2012,7 +2263,7 @@ export const getAllMedication = async (): Promise<Medication[]> => {
       dosage: "",
       isTaken: false,
       petName: "",
-      user_id: userId,
+      token: token,
     }
     const url = `${url_base}/membershipview/get_all_medication`;
     const response = await fetch(url, {
@@ -2023,8 +2274,11 @@ export const getAllMedication = async (): Promise<Medication[]> => {
     const data = await response.json();
     if (data.code == 200) {
       return data.data.medications;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
-      return [];
+      throw new Error(data.msg || '获取用药列表失败');
     }
   } catch (e) {
     console.error('deleteAddress error:', e);
@@ -2035,8 +2289,9 @@ export const getAllMedication = async (): Promise<Medication[]> => {
 export const getPetProfiles = async (): Promise<PetProfile[]> => {
   await delay(500);
   try {
-    const userId = activeUser?.id || 'me';
-    if (!userId) throw new Error('未登录');
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token || '';
+    if (!token) throw new Error('未登录');
     let request_data = {
       id: "",
       name: "",
@@ -2045,7 +2300,7 @@ export const getPetProfiles = async (): Promise<PetProfile[]> => {
       dosage: "",
       isTaken: false,
       petName: "",
-      user_id: userId,
+      token: token,
     }
     const url = `${url_base}/membershipview/get_pets`;
     const response = await fetch(url, {
@@ -2056,6 +2311,9 @@ export const getPetProfiles = async (): Promise<PetProfile[]> => {
     const data = await response.json();
     if (data.code == 200) {
       return data.data.pets;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
       return [];
     }
@@ -2070,8 +2328,9 @@ export const getPetProfiles = async (): Promise<PetProfile[]> => {
 export const addMedication = async (newMedication: Medication): Promise<boolean> => {
   await delay(300);
   try {
-    const userId = activeUser?.id || 'me';
-    if (!userId) throw new Error('未登录');
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    if (!token) throw new Error('未登录');
     let request_data = {
       id: "",
       name: newMedication.name,
@@ -2080,7 +2339,7 @@ export const addMedication = async (newMedication: Medication): Promise<boolean>
       dosage: newMedication.dosage,
       isTaken: newMedication.isTaken,
       petName: newMedication.petName,
-      user_id: userId,
+      token: token,
     };
     const url = `${url_base}/membershipview/add_medication`;
     const response = await fetch(url, {
@@ -2091,8 +2350,11 @@ export const addMedication = async (newMedication: Medication): Promise<boolean>
     const data = await response.json();
     if (data.code == 200) {
       return true;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
-      return false;
+      throw new Error(data.msg || '添加用药失败');
     }
     // 成功则无返回数据
   } catch (e) {
@@ -2105,8 +2367,9 @@ export const addMedication = async (newMedication: Medication): Promise<boolean>
 export const updateMedicationTaken = async (id: string, isTaken: boolean): Promise<boolean> => {
   await delay(300);
   try {
-    const userId = activeUser?.id || 'me';
-    if (!userId) throw new Error('未登录');
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    if (!token) throw new Error('未登录');
     let request_data = {
       id: String(id),
       name: "",
@@ -2115,7 +2378,7 @@ export const updateMedicationTaken = async (id: string, isTaken: boolean): Promi
       dosage: "",
       isTaken: isTaken,
       petName: "",
-      user_id: userId,
+      token: token,
     };
     const url = `${url_base}/membershipview/update_medication`;
     const response = await fetch(url, {
@@ -2126,7 +2389,11 @@ export const updateMedicationTaken = async (id: string, isTaken: boolean): Promi
     const data = await response.json();
     if (data.code == 200) {
       return true;
-    } else {
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
+    }
+    else {
       return false;
     }
     // 成功则无返回数据
@@ -2139,8 +2406,9 @@ export const updateMedicationTaken = async (id: string, isTaken: boolean): Promi
 export const deleteMedication = async (id: string): Promise<boolean> => {
   await delay(300);
   try {
-    const userId = activeUser?.id || 'me';
-    if (!userId) throw new Error('未登录');
+    // const userId = activeUser?.id || 'me';
+    let token = activeUser?.token;
+    if (!token) throw new Error('未登录');
     let request_data = {
       id: String(id),
       name: "",
@@ -2149,7 +2417,7 @@ export const deleteMedication = async (id: string): Promise<boolean> => {
       dosage: "",
       isTaken: false,
       petName: "",
-      user_id: userId,
+      token: token,
     }
     const url = `${url_base}/membershipview/delete_medication`;
     const response = await fetch(url, {
@@ -2160,7 +2428,11 @@ export const deleteMedication = async (id: string): Promise<boolean> => {
     const data = await response.json();
     if (data.code == 200) {
       return true;
-    } else {
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
+    }
+    else {
       return false;
     }
     // 成功则无返回数据
@@ -2182,39 +2454,37 @@ export const open_vip = async (
     // 注意：planId 对应套餐索引，但后端需要的是 combo 字符串
     const planMap = ["SILVER", "GOLD", "PLATINUM"];
     const vipCombo = planMap[planId];
-
+    const user_token = activeUser?.token || '';
     const response = await fetch(url_base + "/membershipview/open_vip", {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_id: userId,
+        // user_id: userId,
+        token: user_token,
         pay_status: true, // 模拟支付成功（实际生产环境应由真实支付回调触发）
         vip_combo: vipCombo
       })
     });
 
     const data = await response.json();
-
     if (data.code === 200 && data.data) {
-      // ✅ 构建 UserInfo 对象
-      const userData = data.data; // 这就是完整的用户数据
-      const newUserInfo: UserInfo = {
-        id: userData.user_id,
-        username: userData.username,
-        name: userData.nickname || userData.username,
-        avatar: userData.avatar_url || '',
-        isVIP: (userData.vip_level == "NONE") ? false : true,
-        vipLevel: userData.vip_level || '',
-        vipExpiry: userData.vip_expiry || '', // 注意：后端字段是 vip_expiry
-        phone: userData.phone || '',
-        gender: userData.gender || '保密',
-        googleBound: !!userData.google_id,
-        appleBound: !!userData.apple_id,
-        level: userData.level || 1,
+      // ✅ 1. 读取当前 Cookie 中的用户信息
+      const currentUserInfo = GetDataFromCookie('UserInfo') as UserInfo;
+      // ✅ 2. 只更新 VIP 相关字段（或从响应中提取必要字段）
+      const updatedUserInfo = {
+        ...currentUserInfo, // 保留原有字段（如 token、avatar 等）
+        vipLevel: data.data.vip_level,
+        vipExpiry: data.data.vip_expiry,
+        isVIP: data.data.vip_level !== "NONE",
+        level: data.data.level, // 如果 level 也变了
+        // nickname, phone 等如果可能变更，也可更新
       };
-      // ✅ 保存到 Cookie（关键！）
-      SaveDataToCookie('UserInfo', newUserInfo, 7);
+      // ✅ 3. 保存回 Cookie
+      SaveDataToCookie('UserInfo', updatedUserInfo, 7);
       return true;
+    } else if (data.code === 401) {
+      await logout();
+      throw new Error('未登录');
     } else {
       console.error("VIP 开通失败:", data.msg);
       return false;

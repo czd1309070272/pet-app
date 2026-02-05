@@ -201,6 +201,8 @@ export interface UserInfo {
   googleBound?: boolean;
   appleBound?: boolean;
   level?: number;
+  token?: string;       //token
+  Expires_in?: number;  //token有效期，单位秒
 }
 
 export interface PetProfile {

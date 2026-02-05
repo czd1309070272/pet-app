@@ -114,9 +114,13 @@ const MedicationView: React.FC<MedicationViewProps> = ({ onBack, filterDate }) =
       };
 
       const savedMed = await backend.addMedication(newMed);
-      setMedications((prev) => [savedMed, ...prev]);
-      setNewName('');
-      setShowAdd(false);
+      if (!savedMed) {
+        throw new Error('添加失败');
+      } else {
+        setMedications((prev) => [newMed, ...prev]);
+        setNewName('');
+        setShowAdd(false);
+      }
     } catch (error) {
       console.error('添加失败:', error);
       alert(error instanceof Error ? error.message : '添加失败');
