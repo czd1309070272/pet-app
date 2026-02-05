@@ -336,8 +336,9 @@ export const fetchPets = async (): Promise<PetProfile[]> => {
     }
   } catch (error) {
     console.error('获取宠物请求失败:', error);
-    return null;
+    // return null;
   }
+  return [];
 };
 
 export const addPet = async (pet: PetProfile): Promise<PetProfile> => {
@@ -369,11 +370,13 @@ export const addPet = async (pet: PetProfile): Promise<PetProfile> => {
     }
   } catch (error) {
     console.error('添加宠物请求失败:', error);
-    return null;
+    throw error;
   }
+  // return null;
+  throw new Error("添加宠物失败");
 };
 
-export const fetchPetProfile = async (pet_id: number): Promise<PetProfile> => {
+export const fetchPetProfile = async (pet_id: number): Promise<PetProfile | null> => {
   try {
     await delay(500);
     // return mockPets[0]; // Default return first pet
@@ -404,11 +407,13 @@ export const fetchPetProfile = async (pet_id: number): Promise<PetProfile> => {
     }
   } catch (error) {
     console.error('获取具体宠物请求失败:', error);
-    return null;
+    // return null;
+    throw error;
   }
+  return null;
 };
 
-export const updatePetProfile = async (pet: PetProfile): Promise<PetProfile> => {
+export const updatePetProfile = async (pet: PetProfile): Promise<PetProfile | null> => {
   try {
     // await delay(500);
     // return mockPets[0]; // Default return first pet
@@ -439,8 +444,10 @@ export const updatePetProfile = async (pet: PetProfile): Promise<PetProfile> => 
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
-    return null;
+    // return null;
+    throw error;
   }
+  return null;
 };
 
 export const updatePetWeight = async (weight: number, pet_id: number): Promise<WeightEntry[]> => {
@@ -470,11 +477,13 @@ export const updatePetWeight = async (weight: number, pet_id: number): Promise<W
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
-    return null;
+    // return null;
+    throw error;
   }
+  return [];
 };
 
-export const moveToMemorial = async (petId: string): Promise<PetProfile> => {
+export const moveToMemorial = async (petId: string): Promise<PetProfile | null> => {
   try {
     // await delay(500);
     // return mockPets[0]; // Default return first pet
@@ -512,9 +521,10 @@ export const moveToMemorial = async (petId: string): Promise<PetProfile> => {
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
-    return null;
+    // return null;
+    throw error;
   }
-
+  return null;
   // throw new Error("Pet not found");
 };
 
@@ -611,8 +621,10 @@ export const fetchWeightHistory = async (petId: string): Promise<WeightEntry[]> 
     }
   } catch (error) {
     console.error('更新宠物请求失败:', error);
-    return null;
+    // return null;
+    throw error;
   }
+  return [];
   // return JSON.parse(JSON.stringify(mockPosts));
   // await delay(500);
   // return [
@@ -681,6 +693,88 @@ let mockPosts: Post[] = [
     ]
   }
 ];
+
+export const fetchCommunityPostDetail = async (postId: number, topLimit: number, repliesLimit: number): Promise<Post> => {
+  await delay(800);
+  // Return deep copy to prevent reference sharing issues with frontend state
+  // 每次获取3个帖子
+  try {
+    var userid = activeUser?.id || 'me';
+    const requestBody = {
+      user_id: userid,
+      post_id: postId,
+      top_limit: topLimit,
+      replies_limit: repliesLimit
+    }
+    console.log("开始获取社区帖子，用户ID:", userid);
+    const response = await fetch(url_base + "/communityview/get_post_detail", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    console.log("获取社区帖子响应:", response);
+    const data = await response.json();
+    console.log("获取社区帖子响应数据:", data);
+    if (data.code === 200) {
+      const dat = data.data;
+      console.log("获取社区帖子数据内容:", dat);
+      if (dat) {
+        console.log("获取社区帖子成功，帖子数量:", dat.post ? dat.post.length : 0);
+        return dat.post; // 返回后端返回的帖子数组
+      }
+    } else {
+      console.log("获取社区帖子失败:", data.msg);
+      throw new Error(data.msg || '获取失败');
+    }
+  } catch (e) {
+    console.error("获取社区帖子时发生错误:", e);
+  }
+  console.log("返回空帖子数组");
+  throw new Error('获取失败');
+  // return null;
+  // return JSON.parse(JSON.stringify(mockPosts));
+};
+
+export const fetchCommunityComments = async (postId: number, timenode: string | null, limit: number, top_comment_id: string | null): Promise<Comment[]> => {
+  try {
+    var userid = activeUser?.id || 'me';
+    const requestBody = {
+      user_id: userid,
+      post_id: postId,
+      timenode: timenode,
+      page_size: limit,
+      top_comment_id: top_comment_id
+    }
+    console.log("开始获取社区帖子，用户ID:", userid);
+    const response = await fetch(url_base + "/communityview/get_comment_tree", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    console.log("获取社区帖子响应:", response);
+    const data = await response.json();
+    console.log("获取社区帖子响应数据:", data);
+    if (data.code === 200) {
+      const dat = data.data;
+      console.log("获取社区帖子数据内容:", dat);
+      if (dat) {
+        console.log("获取社区帖子成功，帖子数量:", dat.comments ? dat.comments.length : 0);
+        return dat.comments; // 返回后端返回的帖子数组
+      }
+    } else {
+      console.log("获取社区帖子失败:", data.msg);
+      throw new Error(data.msg || '获取失败');
+    }
+  } catch (e) {
+    console.error("获取社区帖子时发生错误:", e);
+  }
+  console.log("返回空帖子数组");
+  return [];
+}
 
 export const fetchCommunityPostsByTime = async (datatype: string, timenode: string | null, limit: number): Promise<Post[]> => {
   await delay(800);
@@ -877,7 +971,7 @@ export const uploadCommunityContent = async (user_id: string, content: string, f
 
     if (data.code === 200) {
       console.log('uploadCommunityContent - 后端响应成功，数据:', data.data);
-      const dat = data.data;
+      const dat = data.data.post;
       if (dat) {
         console.log('uploadCommunityContent - 响应数据内容:', dat);
         // 返回创建的帖子对象（模拟数据，实际应从后端响应中获取）
@@ -899,8 +993,10 @@ export const uploadCommunityContent = async (user_id: string, content: string, f
         };
         return newPost;
       }
+      // throw new Error('上传失败');
     } else {
       console.log('uploadCommunityContent - 后端响应失败，错误信息:', data.msg);
+      // return null;
       throw new Error(data.msg || '');
     }
   } catch (error) {
@@ -909,7 +1005,7 @@ export const uploadCommunityContent = async (user_id: string, content: string, f
   }
 
   console.log('uploadCommunityContent - 社区内容上传完成');
-  return null;
+  throw new Error('上传失败');
 };
 
 export const createCommunityPost = async (content: string, image: string | null, tags: string[]): Promise<Post> => {
@@ -1053,23 +1149,20 @@ export const toggleLikePost = async (postId: number): Promise<{ likes: number, i
     console.log("点赞响应数据:", data);
 
     if (data.code === 200) {
-      const dat = data.data;
-      console.log("点赞成功，返回数据:", dat);
-
-      if (dat) {
-        // 根据后端返回的数据结构创建评论对象
-        console.log("返回点赞数:", dat.like_count, "点赞状态:", dat.is_liked);
-        return { likes: dat.like_count, isLiked: dat.is_liked };
-      }
+      return {
+        likes: data.data.likes || 0,
+        isLiked: data.data.isLiked || false
+      };
     } else {
-      console.error("点赞失败，错误信息:", data.msg || '点赞失败');
-      throw new Error(data.msg || '点赞失败');
-      return null;
+      throw new Error(data.msg || '切换点赞状态失败');
     }
-
   } catch (e) {
     console.error("点赞时出错:", e);
-    throw e; // 重新抛出错误，让调用方知道请求失败
+    // 返回默认值而不是抛出错误，以保持API一致性
+    return {
+      likes: 0,
+      isLiked: false
+    };
   }
 
 };
@@ -1087,7 +1180,8 @@ export const addComment = async (postId: number, content: string): Promise<Comme
       user_id: userId,
       parent_id: null,      // 对于顶级评论，可以是 null 或 0
       reply_to_id: null,    // 可选参数
-      content: content
+      content: content,
+      root_id: null,
     }
     console.log("准备发送评论请求到后端API，请求数据:", bodydata);
     const response = await fetch(url_base + "/communityview/comment_post", {
@@ -1116,9 +1210,9 @@ export const addComment = async (postId: number, content: string): Promise<Comme
           isLiked: false,
           isVIP: activeUser?.isVIP,
           vipLevel: activeUser?.vipLevel,
-          replyToName: null, // 顶级评论没有回复目标
+          replyToName: "", // 顶级评论没有回复目标
           replies: [],  // 顶级评论暂时没有回复
-          replyToContent: null,// 顶级评论没有回复目标内容
+          replyToContent: "",// 顶级评论没有回复目标内容
         };
         console.log("评论创建成功，返回新评论对象:", newComment);
         return newComment;
@@ -1126,9 +1220,8 @@ export const addComment = async (postId: number, content: string): Promise<Comme
     } else {
       console.error("评论失败，错误信息:", data.msg || '评论失败');
       throw new Error(data.msg || '评论失败');
-      return null;
     }
-
+    throw new Error(data.msg || '评论失败');
   } catch (e) {
     console.error("添加评论时出错:", e);
     throw e; // 重新抛出错误，让调用方知道请求失败
@@ -1173,8 +1266,8 @@ export const toggleLikeComment = async (postId: number, commentId: string): Prom
     } else {
       console.error("评论点赞失败，错误信息:", data.msg || '点赞失败');
       throw new Error(data.msg || '点赞失败');
-      return null;
     }
+    throw new Error(data.msg || '点赞失败');
 
   } catch (e) {
     console.error("评论点赞时出错:", e);
@@ -1186,7 +1279,7 @@ export const toggleLikeComment = async (postId: number, commentId: string): Prom
 };
 
 // 评论回复，需要参数（post_id,user_id,content,parent_id）(目标帖子id、发布用户id、评论内容、被回复评论id)
-export const addReply = async (postId: number, commentId: string, content: string): Promise<Comment | null> => {
+export const addReply = async (postId: number, commentId: string, content: string, root_id: string | null): Promise<Comment | null> => {
   await delay(500);
   try {
     var userId = activeUser?.id || 'me';
@@ -1198,7 +1291,8 @@ export const addReply = async (postId: number, commentId: string, content: strin
       user_id: userId,
       parent_id: commentId,      // 回复评论时，将目标评论ID作为parent_id
       reply_to_id: null,         // 可选参数，可进一步指定被回复的用户ID
-      content: content
+      content: content,
+      root_id: String(root_id),
     }
     console.log("准备发送回复请求到后端API，请求数据:", bodydata);
     const response = await fetch(url_base + "/communityview/comment_post", {
@@ -1595,7 +1689,7 @@ export const addToCart = async (product: Product, quantity: number): Promise<voi
   }
 
   console.log("函数结束执行，返回 null");
-  return null;
+  // return null;
 };
 
 export const updateCartItem = async (id: string, updates: Partial<CartItem>): Promise<void> => {
@@ -1634,7 +1728,7 @@ export const removeFromCart = async (id: string): Promise<boolean> => {
 };
 
 export const updateOrderStatus = async (order_id: string, payStatus: string): Promise<string> => {
-  return null;
+  return "";
 };
 
 export const updateOrder = async (order: Order): Promise<string> => {
@@ -1672,7 +1766,7 @@ export const createOrderFromCart = async (items: CartItem[], address_id: string)
     var userId = activeUser?.id || 'me';
     console.log("addToCart 当前用户ID:", userId);
 
-    
+
 
     let bodydata = {
       user_id: userId,
@@ -1696,7 +1790,7 @@ export const createOrderFromCart = async (items: CartItem[], address_id: string)
       return dat;
     } else {
       console.error("订单创建失败，错误信息:", data.msg || '请求失败');
-      return null;
+      // return null;
       throw new Error(data.msg || '请求失败');
     }
   } catch (e) {

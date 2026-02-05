@@ -28,6 +28,28 @@ class CommunityHistoryItem (BaseModel):
 class CommunityDetail(BaseModel):
     user_id: int
     post_id: int
+    top_limit: int      # 获取的顶级评论数量
+    replies_limit: int  # 获取的子评论数量
+
+
+class CommunityCommentRequest(BaseModel):
+    user_id: int                    # 当前用户 ID（用于权限/个性化）
+    post_id: int                    # 主内容 ID（视频、帖子等）
+    timenode: str                       # 页码，从 1 开始（前端点击“加载更多”时 +1）
+    page_size: int                  # 每页数量，建议默认 20
+    # 父评论 ID：
+    # - 如果为 None → 请求该 post_id 下的【顶级评论】（分页）
+    # - 如果为具体 ID（如 1001）→ 请求该顶级评论下的【子评论】（分页）
+    top_comment_id: Optional[int] = None
+
+class CommunityCommentItem(BaseModel):
+    id: int
+    user_id: int
+    parent_id: Optional[int]
+    reply_to_uid: Optional[int]  # 用于前端显示 "@某某"
+    content: str
+    likes_count: int
+    created_at: datetime
 
 class CommunityRequestComment(BaseModel):       # 前端请求帖子的模型
     user_id: int                                # 用户ID
@@ -69,6 +91,7 @@ class commentPost(BaseModel):
     parent_id: Optional[int] = None     # 父评论ID，若为顶级评论则为None
     reply_to_id: Optional[int] = None   # 回复的评论ID，若不回复则为None
     content: str                        # 评论内容
+    root_id: Optional[str] = None       # 顶级评论ID
 
 class Comment(BaseModel):
     id: int
@@ -83,6 +106,7 @@ class Comment(BaseModel):
     replyToName:  str
     replies: List['Comment']
     replyToContent:  str
+    top_comment_id: Optional[int] = None     #顶级评论ID
 
 class newPost(BaseModel):   # 新帖子模型
     id: int
