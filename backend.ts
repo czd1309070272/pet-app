@@ -682,6 +682,87 @@ let mockPosts: Post[] = [
   }
 ];
 
+export const fetchCommunityPostDetail = async (postId: number, topLimit: number, repliesLimit: number): Promise<Post> => {
+  await delay(800);
+  // Return deep copy to prevent reference sharing issues with frontend state
+  // 每次获取3个帖子
+  try {
+    var userid = activeUser?.id || 'me';
+    const requestBody = {
+      user_id: userid,
+      post_id: postId,
+      top_limit: topLimit,
+      replies_limit: repliesLimit
+    }
+    console.log("开始获取社区帖子，用户ID:", userid);
+    const response = await fetch(url_base + "/communityview/get_post_detail", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    console.log("获取社区帖子响应:", response);
+    const data = await response.json();
+    console.log("获取社区帖子响应数据:", data);
+    if (data.code === 200) {
+      const dat = data.data;
+      console.log("获取社区帖子数据内容:", dat);
+      if (dat) {
+        console.log("获取社区帖子成功，帖子数量:", dat.post ? dat.post.length : 0);
+        return dat.post; // 返回后端返回的帖子数组
+      }
+    } else {
+      console.log("获取社区帖子失败:", data.msg);
+      throw new Error(data.msg || '获取失败');
+    }
+  } catch (e) {
+    console.error("获取社区帖子时发生错误:", e);
+  }
+  console.log("返回空帖子数组");
+  return null;
+  // return JSON.parse(JSON.stringify(mockPosts));
+};
+
+export const fetchCommunityComments = async (postId: number, timenode: string | null, limit: number, top_comment_id: string | null): Promise<Comment[]> => {
+  try {
+    var userid = activeUser?.id || 'me';
+    const requestBody = {
+      user_id: userid,
+      post_id: postId,
+      timenode: timenode,
+      page_size: limit,
+      top_comment_id: top_comment_id
+    }
+    console.log("开始获取社区帖子，用户ID:", userid);
+    const response = await fetch(url_base + "/communityview/get_comment_tree", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    console.log("获取社区帖子响应:", response);
+    const data = await response.json();
+    console.log("获取社区帖子响应数据:", data);
+    if (data.code === 200) {
+      const dat = data.data;
+      console.log("获取社区帖子数据内容:", dat);
+      if (dat) {
+        console.log("获取社区帖子成功，帖子数量:", dat.comments ? dat.comments.length : 0);
+        return dat.comments; // 返回后端返回的帖子数组
+      }
+    } else {
+      console.log("获取社区帖子失败:", data.msg);
+      throw new Error(data.msg || '获取失败');
+    }
+  } catch (e) {
+    console.error("获取社区帖子时发生错误:", e);
+  }
+  console.log("返回空帖子数组");
+  return [];
+}
+
 export const fetchCommunityPostsByTime = async (datatype: string, timenode: string | null, limit: number): Promise<Post[]> => {
   await delay(800);
   // Return deep copy to prevent reference sharing issues with frontend state
@@ -1087,7 +1168,8 @@ export const addComment = async (postId: number, content: string): Promise<Comme
       user_id: userId,
       parent_id: null,      // 对于顶级评论，可以是 null 或 0
       reply_to_id: null,    // 可选参数
-      content: content
+      content: content,
+      root_id: null,
     }
     console.log("准备发送评论请求到后端API，请求数据:", bodydata);
     const response = await fetch(url_base + "/communityview/comment_post", {
@@ -1186,7 +1268,7 @@ export const toggleLikeComment = async (postId: number, commentId: string): Prom
 };
 
 // 评论回复，需要参数（post_id,user_id,content,parent_id）(目标帖子id、发布用户id、评论内容、被回复评论id)
-export const addReply = async (postId: number, commentId: string, content: string): Promise<Comment | null> => {
+export const addReply = async (postId: number, commentId: string, content: string, root_id: string | null): Promise<Comment | null> => {
   await delay(500);
   try {
     var userId = activeUser?.id || 'me';
@@ -1198,7 +1280,8 @@ export const addReply = async (postId: number, commentId: string, content: strin
       user_id: userId,
       parent_id: commentId,      // 回复评论时，将目标评论ID作为parent_id
       reply_to_id: null,         // 可选参数，可进一步指定被回复的用户ID
-      content: content
+      content: content,
+      root_id: String(root_id),
     }
     console.log("准备发送回复请求到后端API，请求数据:", bodydata);
     const response = await fetch(url_base + "/communityview/comment_post", {
@@ -1672,7 +1755,7 @@ export const createOrderFromCart = async (items: CartItem[], address_id: string)
     var userId = activeUser?.id || 'me';
     console.log("addToCart 当前用户ID:", userId);
 
-    
+
 
     let bodydata = {
       user_id: userId,

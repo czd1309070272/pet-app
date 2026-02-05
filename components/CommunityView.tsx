@@ -30,6 +30,7 @@ import {
 import * as backend from '../backend';
 import { url_base, View } from '../types';
 import { useCommunityStore } from '@/stores/communityStore'; // 👈 新增导入
+import { usePostDetailStore } from '@/stores/usePostDetailStore';
 
 interface CommunityViewProps {
   onBack: () => void;
@@ -37,6 +38,22 @@ interface CommunityViewProps {
   initialOpenPost?: boolean;
   onModalClose?: () => void;
 }
+
+// 🔍 在整个文件顶部，import 下方
+const findCommentById = (
+  comments: backend.Comment[],
+  id: string
+): backend.Comment | null => {
+  for (const top of comments) {
+    if (top.id === id) return top;
+    if (top.replies) {
+      for (const reply of top.replies) {
+        if (reply.id === id) return reply;
+      }
+    }
+  }
+  return null;
+};
 
 const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initialOpenPost = false, onModalClose }) => {
   const {
@@ -51,6 +68,19 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
     getCommunityTimenode,
   } = useCommunityStore();
 
+  const {
+    getFullPost,
+    setFullPost,
+    setComments,
+    addComments,
+    updateCommentReplies,
+    clearData,
+    getTopLimit,
+    getRepliesLimit,
+    getComments,
+    getCommentLastCreatedTime,
+    getLastReplyTimeByTopId,
+  } = usePostDetailStore();
   // 替换原来的 useState
   const initialPosts = useCommunityStore.getState().getCommunityList();
   const [posts, setPosts] = useState<backend.Post[]>(initialPosts);
@@ -70,10 +100,17 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
   const [isDetailClosing, setIsDetailClosing] = useState(false);
   const [newComment, setNewComment] = useState('');
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const commentsFromStore = getComments();
+  const [isLoadingMore, setIsLoadingMore] = useState(false); // 👈 新增：加载更多状态
+  // 控制顶级评论“加载更多”
+  const [hasMoreTopComments, setHasMoreTopComments] = useState(true);
 
   // 評論詳情（二級詳情）狀態
-  const [commentDetailTarget, setCommentDetailTarget] = useState<backend.Comment | null>(null);
+  // const [commentDetailTarget, setCommentDetailTarget] = useState<backend.Comment | null>(null);
+  const [commentDetailId, setCommentDetailId] = useState<string | null>(null);
   const [isCommentDetailClosing, setIsCommentDetailClosing] = useState(false);
+  const [isLoadingMoreReplies, setIsLoadingMoreReplies] = useState(false);  // 控制子评论“加载更多”的 loading 状态
+  const [hasMoreReplies, setHasMoreReplies] = useState(true);// 标记是否还有更多子评论可加载（由 API 响应决定）
 
   // 回覆功能狀態
   const [replyingTo, setReplyingTo] = useState<{ id: string, author: string } | null>(null);
@@ -93,6 +130,12 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
 
   // 在组件顶部添加一个ref来标记是否已经加载过
   const hasLoaded = useRef(false);
+
+  // ✅ 根据 commentDetailId 实时查找最新评论对象
+  const targetComment = useMemo(() => {
+    if (!commentDetailId) return null;
+    return findCommentById(commentsFromStore, commentDetailId);
+  }, [commentDetailId, commentsFromStore]); // 依赖 store 变化
 
   useEffect(() => {
     // 重置偏移量以确保从第一页开始加载（可选，根据业务）
@@ -288,104 +331,245 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
   const handleLikeComment = async (commentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!expandedPost) return;
+
+    // 👇 1. 乐观更新：立即更新 UI（提升体验）
+    const updateStoreComment = (id: string, delta: number) => {
+      // 更新 store 中的评论
+      const comments = getComments();
+      const updateReplies = (replies: backend.Comment[]): backend.Comment[] =>
+        replies.map(c =>
+          c.id === id
+            ? { ...c, likes: c.likes + delta, isLiked: !c.isLiked }
+            : { ...c, replies: updateReplies(c.replies || []) }
+        );
+
+      const updatedComments = comments.map(c =>
+        c.id === id
+          ? { ...c, likes: c.likes + delta, isLiked: !c.isLiked }
+          : { ...c, replies: updateReplies(c.replies || []) }
+      );
+      setComments(updatedComments); // 👈 更新 store
+    };
+
+    // 👇 先乐观更新（+1 或 -1）
+    const targetComment = findCommentById(getComments(), commentId);
+    if (targetComment) {
+      updateStoreComment(commentId, targetComment.isLiked ? -1 : 1);
+    }
+
     try {
+      // 👇 2. 调用后端接口
       const { likes, isLiked } = await backend.toggleLikeComment(expandedPost.id, commentId);
 
-      const updateCommentInList = (list: backend.Comment[]): backend.Comment[] => {
-        return list.map(c => {
-          if (c.id === commentId) return { ...c, likes, isLiked };
-          if (c.replies) return { ...c, replies: updateCommentInList(c.replies) };
-          return c;
-        });
+      // 👇 3. 【可选】用后端返回的真实值覆盖（更安全）
+      const finalUpdate = (id: string) => {
+        const comments = getComments();
+        const updateReplies = (replies: backend.Comment[]): backend.Comment[] =>
+          replies.map(c =>
+            c.id === id ? { ...c, likes, isLiked } : { ...c, replies: updateReplies(c.replies || []) }
+          );
+
+        const updatedComments = comments.map(c =>
+          c.id === id ? { ...c, likes, isLiked } : { ...c, replies: updateReplies(c.replies || []) }
+        );
+        setComments(updatedComments);
       };
+      finalUpdate(commentId);
 
-      const updatedCommentList = updateCommentInList(expandedPost.commentList);
+      // 同时更新 expandedPost（用于详情页顶部显示）
+      setExpandedPost(prev => prev ? ({ ...prev, commentList: getComments() }) : null);
 
-      // 更新 expandedPost
-      const newExpanded = { ...expandedPost, commentList: updatedCommentList };
-      setExpandedPost(newExpanded);
-
-      // 同時更新 commentDetailTarget 如果它正在開啟中
-      if (commentDetailTarget) {
-        if (commentDetailTarget.id === commentId) {
-          setCommentDetailTarget({ ...commentDetailTarget, likes, isLiked });
-        } else if (commentDetailTarget.replies) {
-          setCommentDetailTarget({
-            ...commentDetailTarget,
-            replies: updateCommentInList(commentDetailTarget.replies)
-          });
-        }
+    } catch (err) {
+      console.error(err);
+      // 👇 4. 如果失败，回滚乐观更新
+      if (targetComment) {
+        updateStoreComment(commentId, targetComment.isLiked ? 1 : -1);
       }
-      console.log('Updated comment list:', updatedCommentList);
-      setPosts(prev => prev.map(p => p.id === expandedPost.id ? { ...p, commentList: updatedCommentList } : p));
-    } catch (err) { console.error(err); }
+      alert('操作失败，请重试');
+    }
+  };
+
+  // 👇 新增：加载更多顶级评论
+  const handleLoadMoreTopComments = async () => {
+    console.log('开始加载更多顶级评论', {
+      expandedPostId: expandedPost?.id,
+      isLoadingMore: isLoadingMore,
+      hasMoreTopComments: hasMoreTopComments
+    });
+
+    if (!expandedPost || isLoadingMore || !hasMoreTopComments) {
+      console.log('加载条件不满足，跳过加载');
+      return;
+    }
+
+    setIsLoadingMore(true);
+    try {
+      const limit = getTopLimit();
+      console.log('调用API获取更多顶级评论，参数:', {
+        postId: expandedPost.id,
+        cursorTime: getCommentLastCreatedTime(),
+        limit: limit,
+        topCommentId: null
+      });
+
+      const newCommentsResponse = await backend.fetchCommunityComments(
+        expandedPost.id,
+        getCommentLastCreatedTime(),
+        limit,
+        null, // topCommentId 为 null 表示加载顶级评论
+      );
+
+      // 👇 修改：newCommentsResponse 是数组，直接使用数组进行判断
+      const comments = newCommentsResponse || [];
+      const hasMore = comments.length > 0; // 如果数组有内容，表示还有更多数据
+
+      console.log('获取到更多顶级评论结果:', {
+        commentsCount: comments.length,
+        hasMore: hasMore,
+        comments: comments
+      });
+
+      if (comments.length > 0) {
+        addComments(0, comments); // 添加到 store
+        console.log('已将新评论添加到store');
+      }
+
+      // 更新状态：无论有没有新数据，都以 API 的 has_more 为准
+      setHasMoreTopComments(hasMore);
+      console.log('更新hasMoreTopComments状态:', hasMore);
+
+    } catch (error) {
+      console.error('加载更多评论失败:', error);
+      alert('加载失败，请稍后重试');
+      setHasMoreTopComments(false); // 出错也视为无更多
+    } finally {
+      setIsLoadingMore(false);
+      console.log('结束加载更多顶级评论，重置loading状态');
+    }
+  };
+
+  const handleLoadMoreReplies = async () => {
+    console.log('开始加载更多回复', {
+      commentDetailId: commentDetailId,
+      isLoadingMoreReplies: isLoadingMoreReplies,
+      hasMoreReplies: hasMoreReplies,
+      expandedPostId: expandedPost?.id
+    });
+
+    if (!commentDetailId || isLoadingMoreReplies || !hasMoreReplies) {
+      console.log('加载回复条件不满足，跳过加载');
+      return; // 注意：这里用 commentDetailId
+    }
+
+    setIsLoadingMoreReplies(true);
+    try {
+      const limit = getRepliesLimit();
+      const cursorTime = getLastReplyTimeByTopId(commentDetailId);
+      console.log('调用API获取更多回复，参数:', {
+        postId: expandedPost!.id,
+        cursorTime: cursorTime,
+        limit: limit,
+        topCommentId: commentDetailId
+      });
+
+      const newRepliesResponse = await backend.fetchCommunityComments(
+        expandedPost!.id,
+        cursorTime,
+        limit,
+        commentDetailId, // 👈 用 ID
+      );
+
+      const replies = newRepliesResponse || [];
+      const hasMore = replies.length > 0;
+
+      console.log('获取到更多回复结果:', {
+        repliesCount: replies.length,
+        hasMore: hasMore,
+        replies: replies
+      });
+
+      if (replies.length > 0) {
+        addComments(Number(commentDetailId), replies); // ✅ 只更新 store
+        console.log('已将新回复添加到store，父评论ID:', commentDetailId);
+        // 不再需要手动 setCommentDetailTarget！
+      }
+
+      setHasMoreReplies(hasMore);
+      console.log('更新hasMoreReplies状态:', hasMore);
+    } catch (error) {
+      console.error('加载更多回复失败:', error);
+      alert('加载失败，请稍后重试');
+      setHasMoreReplies(false);
+    } finally {
+      setIsLoadingMoreReplies(false);
+      console.log('结束加载更多回复，重置loading状态');
+    }
   };
 
   const handleAddComment = async () => {
     if (!newComment.trim() || !expandedPost) return;
     console.log('开始处理添加评论或回复，当前评论内容:', newComment);
+
     try {
-      // 核心邏輯：如果詳情框開著，默認就是對該詳情主體的回覆（除非已經指定了特定的子回覆對象）
-      const effectiveReplyTarget = replyingTo || (commentDetailTarget ? { id: commentDetailTarget.id, author: commentDetailTarget.author } : null);
+      // ✅ 使用 targetComment（来自 store）替代已删除的 commentDetailTarget
+      const effectiveReplyTarget = replyingTo || (targetComment ?
+        { id: targetComment.id, author: targetComment.author } : null);
 
       if (effectiveReplyTarget) {
-        console.log('准备添加回复，参数:', { postId: expandedPost.id, commentId: effectiveReplyTarget.id, content: newComment });
-        const reply = await backend.addReply(expandedPost.id, effectiveReplyTarget.id, newComment);
+        // ====== 查找被回复评论的完整信息（用于确定 rootId）======
+        const fullTargetComment = findCommentById(commentsFromStore, effectiveReplyTarget.id);
+        if (!fullTargetComment) {
+          alert('目标评论未找到');
+          return;
+        }
+
+        const rootId = fullTargetComment.top_comment_id || fullTargetComment.id;
+
+        console.log('准备添加回复，参数:', {
+          postId: expandedPost.id,
+          commentId: effectiveReplyTarget.id,
+          content: newComment,
+          rootId
+        });
+
+        const reply = await backend.addReply(
+          expandedPost.id,
+          effectiveReplyTarget.id,
+          newComment,
+          rootId
+        );
+
         console.log('后端回复操作完成，返回结果:', reply);
         if (!reply) {
-          console.log('回复添加失败，返回结果为空');
           alert('回复添加失败，请重试');
           return;
         }
-        console.log('回复添加成功，开始更新本地状态');
 
-        const injectReplyFlattened = (list: backend.Comment[]): backend.Comment[] => {
-          return list.map(c => {
-            if (c.id === effectiveReplyTarget.id || c.replies?.some(r => r.id === effectiveReplyTarget.id)) {
-              return { ...c, replies: [...(c.replies || []), reply] };
-            }
-            return c;
-          });
-        };
+        // ✅ 统一使用 addComments 添加子评论
+        addComments(effectiveReplyTarget.id, [reply]);
 
-        const updatedList = injectReplyFlattened(expandedPost.commentList);
-        const newExpanded = {
-          ...expandedPost,
-          commentList: updatedList,
-          comments: expandedPost.comments + 1
-        };
-        setExpandedPost(newExpanded);
-
-        // 更新評論詳情抽屜
-        if (commentDetailTarget) {
-          // 注意：這裡需要找到根評論更新詳情框，因為 reply 始終掛載在根評論的 replies 下
-          if (commentDetailTarget.id === effectiveReplyTarget.id || commentDetailTarget.replies?.some(r => r.id === effectiveReplyTarget.id)) {
-            setCommentDetailTarget({ ...commentDetailTarget, replies: [...(commentDetailTarget.replies || []), reply] });
-          }
-        }
-        console.log('Updated comment list with new reply:', updatedList);
-        setPosts(prev => prev.map(p => p.id === expandedPost.id ? newExpanded : p));
         setReplyingTo(null);
+        setNewComment('');
+        console.log('回复已成功添加并更新UI');
+
       } else {
-        console.log('准备添加评论，参数:', { postId: expandedPost.id, content: newComment });
+        // ====== 添加顶级评论 ======
+        console.log('准备添加顶级评论，参数:', { postId: expandedPost.id, content: newComment });
+
         const comment = await backend.addComment(expandedPost.id, newComment);
         console.log('后端评论操作完成，返回结果:', comment);
         if (!comment) {
-          console.log('评论添加失败，返回结果为空');
           alert('评论添加失败，请重试');
           return;
         }
-        const newExpanded = {
-          ...expandedPost,
-          commentList: [comment, ...expandedPost.commentList],
-          comments: expandedPost.comments + 1
-        };
-        setExpandedPost(newExpanded);
-        console.log('Updated comment list with new comment:', newExpanded.commentList);
-        setPosts(prev => prev.map(p => p.id === expandedPost.id ? { ...p, commentList: newExpanded.commentList, comments: newExpanded.comments } : p));
+
+        // ✅ 统一使用 addComments 添加顶级评论（parentId = 0）
+        addComments(0, [comment]);
+
+        setNewComment('');
+        console.log('顶级评论已成功添加并更新UI');
       }
-      setNewComment('');
-      console.log('评论/回复已成功添加并更新UI');
+
     } catch (err) {
       console.error('处理添加评论时出错:', err);
       alert('添加评论时出现错误，请重试');
@@ -400,13 +584,16 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
 
   const toggleRepliesExpansion = (commentId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    // 這裡我們修改為彈出底部署
-    const targetComment = expandedPost?.commentList.find(c => c.id === commentId);
-    if (targetComment) {
-      setCommentDetailTarget(targetComment);
-      // 進入詳情框後，默認不顯示“正在回覆”，但邏輯上默認回覆主評論人
-      setReplyingTo(null);
-    }
+    setCommentDetailId(commentId); // ✅ 只存 ID
+    setReplyingTo(null);
+    // e.stopPropagation();
+    // // 這裡我們修改為彈出底部署
+    // const targetComment = expandedPost?.commentList.find(c => c.id === commentId);
+    // if (targetComment) {
+    //   setCommentDetailTarget(targetComment);
+    //   // 進入詳情框後，默認不顯示“正在回覆”，但邏輯上默認回覆主評論人
+    //   setReplyingTo(null);
+    // }
   };
 
   const closeDetail = () => {
@@ -415,13 +602,22 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
       setExpandedPost(null);
       setReplyingTo(null);
       setIsDetailClosing(false);
+      // 👇 保留已有的 clearData（清空 store 中的评论数据）
+      clearData();
+      // 👇 新增：重置两个“加载更多”的 loading 状态
+      setIsLoadingMore(false);
+      setIsLoadingMoreReplies(false);
+      // 可选：也重置 hasMore 状态（避免下次打开显示“无更多”）
+      setHasMoreTopComments(true);
+      setHasMoreReplies(true);
     }, 300);
   };
 
   const closeCommentDetail = () => {
     setIsCommentDetailClosing(true);
     setTimeout(() => {
-      setCommentDetailTarget(null);
+      setCommentDetailId(null); // ✅ 清空 ID
+      // setCommentDetailTarget(null);
       setReplyingTo(null);
       setIsCommentDetailClosing(false);
     }, 300);
@@ -617,8 +813,8 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
 
   const CommentItem: React.FC<{ comment: backend.Comment, isReply?: boolean }> = ({ comment, isReply = false }) => {
     // 只有根評論且當前不在評論詳情抽屜中時，才顯示“共x條回覆”按鈕
-    const showRepliesLink = !isReply && !commentDetailTarget && comment.replies && comment.replies.length > 0;
-
+    // const showRepliesLink = !isReply && !commentDetailTarget && comment.replies && comment.replies.length > 0;
+    const showRepliesLink = !isReply && !commentDetailId && comment.replies && comment.replies.length > 0;
     return (
       <div className={`flex space-x-3 group ${isReply ? 'mb-6' : 'mb-8'}`}>
         <div className="flex-shrink-0">
@@ -664,7 +860,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
           {showRepliesLink && (
             <div
               onClick={(e) => toggleRepliesExpansion(comment.id, e)}
-              className="mt-3 text-[11px] font-black text-gray-400 hover:text-orange-500 transition-colors cursor-pointer flex items-center bg-gray-50/40 dark:bg-slate-800/20 px-2 py-1.5 rounded-lg w-fit"
+              className="mt-3 text-[11px] font-black text-gray-400 transition-colors cursor-pointer flex items-center bg-gray-50/40 dark:bg-slate-800/20 px-2 py-1.5 rounded-lg w-fit"
             >
               共 {comment.replies?.length} 條回覆，點擊查看
             </div>
@@ -693,9 +889,22 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
           </div>
         ))}
         {post.comments > 2 && (
-          <div
-            onClick={(e) => { e.stopPropagation(); setExpandedPost(post); }}
-            className="pt-2 border-t border-gray-200/30 text-[10px] font-black text-gray-400 hover:text-orange-500 transition-colors cursor-pointer flex items-center"
+          <div onClick={async (e) => {
+            e.stopPropagation();
+            try {
+              const fullPost = await backend.fetchCommunityPostDetail(
+                post.id,
+                getTopLimit(),
+                getRepliesLimit()
+              );
+              setFullPost(fullPost);
+              setExpandedPost(fullPost);
+            } catch (error) {
+              console.error("加载完整帖子失败:", error);
+              alert("加载评论详情失败，请稍后再试");
+            }
+          }}
+            className="pt-2 border-t border-gray-200/30 text-[10px] font-black text-gray-400 transition-colors cursor-pointer flex items-center"
           >
             共 {post.comments} 條回覆，點擊查看信息
           </div>
@@ -768,7 +977,20 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
           ) : (
             <div className="divide-y divide-gray-100 dark:divide-white/5 bg-white dark:bg-slate-900">
               {filteredPosts.map(post => (
-                <div key={post.id} onClick={() => setExpandedPost(post)} className="p-4 flex space-x-3 cursor-pointer active:bg-gray-50 dark:active:bg-slate-800 transition-colors">
+                //   <div key={post.id} onClick={() => setExpandedPost(post)} className="p-4 flex space-x-3 cursor-pointer active:bg-gray-50 dark:active:bg-slate-800 transition-colors"> 
+                < div
+                  key={post.id}
+                  onClick={async () => {
+                    // ✅ 新增：加载完整帖子数据
+                    try {
+                      const fullPost = await backend.fetchCommunityPostDetail(post.id, getTopLimit(), getRepliesLimit()); // ← 关键！
+                      setFullPost(fullPost); // ← 先把这个帖子储存起来
+                      setExpandedPost(fullPost);
+                    } catch (error) {
+                      console.error('加载完整帖子失败:', error);
+                      alert('无法加载帖子详情，请稍后重试');
+                    }
+                  }} className="p-4 flex space-x-3 cursor-pointer active:bg-gray-50 dark:active:bg-slate-800 transition-colors">
                   <div className="flex-shrink-0"><img src={`${url_base}${post.avatar}`} className="w-12 h-12 rounded-xl object-cover border border-gray-100 dark:border-white/10" alt="avatar" /></div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
@@ -835,155 +1057,112 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
         </div>
       </div>
 
-      {expandedPost && (
-        <div className={`fixed inset-0 z-[100] flex flex-col bg-white dark:bg-slate-950 overflow-hidden ${isDetailClosing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
-          <div className="sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md z-50 px-4 py-3 flex items-center justify-between border-b border-gray-100 dark:border-white/5">
-            <button onClick={closeDetail} className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-white active:scale-90"><ArrowLeft size={20} /></button>
-            <h3 className="font-black text-sm">動態詳情</h3>
-            <button className="w-10 h-10 flex items-center justify-center text-gray-400"><MoreHorizontal size={20} /></button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto pb-24 scrollbar-hide">
-            <div className="p-4 flex items-center space-x-3">
-              <img src={`${url_base}${expandedPost.avatar}`} className="w-11 h-11 rounded-full object-cover border border-gray-50 dark:border-white/10 shadow-sm" alt="avatar" />
-              <div>
-                <div className="flex items-center">
-                  <p className="font-black text-sm dark:text-white">{expandedPost.author}</p>
-                  <LevelBadge level={expandedPost.vipLevel === 'SVIP' ? 6 : (expandedPost.isVIP ? 5 : 3)} />
-                </div>
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{expandedPost.time} 發布</p>
-              </div>
+      {
+        expandedPost && (
+          <div className={`fixed inset-0 z-[100] flex flex-col bg-white dark:bg-slate-950 overflow-hidden ${isDetailClosing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
+            <div className="sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md z-50 px-4 py-3 flex items-center justify-between border-b border-gray-100 dark:border-white/5">
+              <button onClick={closeDetail} className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-white active:scale-90"><ArrowLeft size={20} /></button>
+              <h3 className="font-black text-sm">動態詳情</h3>
+              <button className="w-10 h-10 flex items-center justify-center text-gray-400"><MoreHorizontal size={20} /></button>
             </div>
 
-            <div className="px-4 space-y-4">
-              <div className="text-[15px] text-gray-800 dark:text-slate-100 leading-relaxed font-medium whitespace-pre-wrap">
-                {expandedPost.fullContent}
+            <div className="flex-1 overflow-y-auto pb-24 scrollbar-hide">
+              <div className="p-4 flex items-center space-x-3">
+                <img src={`${url_base}${expandedPost.avatar}`} className="w-11 h-11 rounded-full object-cover border border-gray-50 dark:border-white/10 shadow-sm" alt="avatar" />
+                <div>
+                  <div className="flex items-center">
+                    <p className="font-black text-sm dark:text-white">{expandedPost.author}</p>
+                    <LevelBadge level={expandedPost.vipLevel === 'SVIP' ? 6 : (expandedPost.isVIP ? 5 : 3)} />
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{expandedPost.time} 發布</p>
+                </div>
+              </div>
 
-                {expandedPost.userTags && expandedPost.userTags.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    {expandedPost.userTags.map((tag, i) => (
-                      <span key={i} className="text-sm font-black text-blue-500">{tag}</span>
+              <div className="px-4 space-y-4">
+                <div className="text-[15px] text-gray-800 dark:text-slate-100 leading-relaxed font-medium whitespace-pre-wrap">
+                  {expandedPost.fullContent}
+
+                  {expandedPost.userTags && expandedPost.userTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {expandedPost.userTags.map((tag, i) => (
+                        <span key={i} className="text-sm font-black text-blue-500">{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <ImageGrid images={expandedPost.images} onImageClick={(url) => setViewingImage(url)} isDetail={true} />
+
+                <div className="flex items-center space-x-10 py-5 border-y border-gray-100 dark:border-white/5">
+                  <button
+                    onClick={(e) => handleLike(expandedPost.id, e as any)}
+                    className={`flex items-center space-x-2 font-black transition-all active:scale-110 ${expandedPost.isLiked ? 'text-rose-500' : 'text-gray-400'}`}
+                  >
+                    <Heart size={22} fill={expandedPost.isLiked ? "currentColor" : "none"} strokeWidth={expandedPost.isLiked ? 0 : 2} />
+                    <span className="text-xs">{expandedPost.likes} 點讚</span>
+                  </button>
+                  <button className="flex items-center space-x-2 text-blue-500 font-black">
+                    <MessageCircle size={22} />
+                    <span className="text-xs">{expandedPost.comments} 評論</span>
+                  </button>
+                </div>
+
+                <div className="space-y-4 mt-4 pb-12">
+                  <h4 className="font-black text-gray-400 text-[10px] uppercase tracking-widest px-1">全部評論 ({expandedPost.comments})</h4>
+                  {/* <div className="space-y-2">
+                    {expandedPost.commentList.map(comment => (
+                      <CommentItem key={comment.id} comment={comment} />
                     ))}
-                  </div>
-                )}
-              </div>
-              <ImageGrid images={expandedPost.images} onImageClick={(url) => setViewingImage(url)} isDetail={true} />
+                  </div> */}
+                  {/* 评论列表 */}
 
-              <div className="flex items-center space-x-10 py-5 border-y border-gray-100 dark:border-white/5">
-                <button
-                  onClick={(e) => handleLike(expandedPost.id, e as any)}
-                  className={`flex items-center space-x-2 font-black transition-all active:scale-110 ${expandedPost.isLiked ? 'text-rose-500' : 'text-gray-400'}`}
-                >
-                  <Heart size={22} fill={expandedPost.isLiked ? "currentColor" : "none"} strokeWidth={expandedPost.isLiked ? 0 : 2} />
-                  <span className="text-xs">{expandedPost.likes} 點讚</span>
-                </button>
-                <button className="flex items-center space-x-2 text-blue-500 font-black">
-                  <MessageCircle size={22} />
-                  <span className="text-xs">{expandedPost.comments} 評論</span>
-                </button>
-              </div>
-
-              <div className="space-y-4 mt-4 pb-12">
-                <h4 className="font-black text-gray-400 text-[10px] uppercase tracking-widest px-1">全部評論 ({expandedPost.comments})</h4>
-                <div className="space-y-2">
-                  {expandedPost.commentList.map(comment => (
-                    <CommentItem key={comment.id} comment={comment} />
-                  ))}
+                  {commentsFromStore.length > 0 ? (
+                    <div className="space-y-2">
+                      {commentsFromStore.map(comment => (
+                        <CommentItem key={comment.id} comment={comment} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <p className="text-gray-400 text-sm">暫無評論</p>
+                    </div>
+                  )}
+                  {/* 加载更多 / 无更多提示 */}
+                  {/* 顶级评论 - 加载更多 / 无更多提示 */}
+                  {commentsFromStore.length > 0 ? (
+                    <>
+                      {hasMoreTopComments ? (
+                        <button
+                          onClick={handleLoadMoreTopComments}
+                          disabled={isLoadingMore}
+                          className={`w-full h-12 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-1.5 shadow-sm ${isLoadingMore
+                            ? 'bg-white/50 dark:bg-slate-800/30 text-blue-400 cursor-not-allowed'
+                            : 'bg-white/95 dark:bg-slate-900/95 text-blue-600 hover:text-blue-700 active:scale-95 shadow-none dark:shadow-none backdrop-blur-md'
+                            }`}
+                        >
+                          {isLoadingMore ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin" />
+                              <span>加載中...</span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown size={16} />
+                              <span>加載更多評論</span>
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <p className="text-center text-blue-400 text-[10px] font-black uppercase tracking-widest py-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md">
+                          暫無更多評論
+                        </p>
+                      )}
+                    </>
+                  ) : null}
                 </div>
               </div>
             </div>
-          </div>
 
-          <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-100 dark:border-white/5 p-4 safe-bottom flex flex-col z-[110]">
-            {replyingTo && (
-              <div className="flex items-center justify-between bg-orange-50/50 dark:bg-orange-500/10 px-3 py-1.5 rounded-t-xl border-x border-t border-orange-100 dark:border-white/5 animate-in slide-in-from-bottom-2">
-                <span className="text-[10px] font-black text-orange-600 flex items-center">
-                  <Reply size={12} className="mr-1" />
-                  正在回覆 @{replyingTo.author}
-                </span>
-                <button onClick={() => setReplyingTo(null)} className="text-gray-400 p-1"><X size={12} /></button>
-              </div>
-            )}
-            <div className="flex items-center space-x-3">
-              <div className={`flex-1 flex items-center bg-gray-100 dark:bg-slate-800/80 rounded-2xl px-4 py-2 border border-gray-200/50 dark:border-white/5 ${replyingTo ? 'rounded-tl-none' : ''}`}>
-                <Smile size={20} className="text-gray-400 mr-2" />
-                <input
-                  ref={commentInputRef}
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  placeholder={replyingTo ? `回覆給 @${replyingTo.author}...` : "說點溫馨的話吧..."}
-                  className="bg-transparent w-full text-xs font-bold focus:outline-none py-2 dark:text-white"
-                />
-              </div>
-              <button
-                onClick={handleAddComment}
-                disabled={!newComment.trim()}
-                className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${newComment.trim() ? 'bg-orange-500 text-white shadow-lg active:scale-95' : 'bg-gray-100 dark:bg-slate-800 text-gray-300 dark:text-slate-600 shadow-inner'}`}
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 評論詳情框 (仿B站底部署) */}
-      {commentDetailTarget && (
-        <div className={`fixed inset-0 z-[160] flex flex-col items-center justify-end ${isCommentDetailClosing ? 'pointer-events-none' : ''}`}>
-          {/* 黑色半透明背景遮罩 */}
-          <div
-            className={`absolute inset-0 bg-black/60 transition-opacity duration-300 ${isCommentDetailClosing ? 'opacity-0' : 'opacity-100'}`}
-            onClick={closeCommentDetail}
-          />
-
-          {/* 從底部彈出的內容區 */}
-          <div className={`relative w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[20px] flex flex-col max-h-[85vh] transition-transform duration-300 shadow-2xl ${isCommentDetailClosing ? 'translate-y-full' : 'translate-y-0'}`}>
-            {/* 抽屜頭部 */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5">
-              <span className="font-black text-gray-800 dark:text-white">評論詳情</span>
-              <button onClick={closeCommentDetail} className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-800 dark:hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto scrollbar-hide">
-              {/* 被回覆的原評論 */}
-              <div className="p-5">
-                <CommentItem comment={commentDetailTarget} isReply={false} />
-              </div>
-
-              {/* 灰色分隔條 */}
-              <div className="h-2 bg-gray-100 dark:bg-slate-800/50 w-full" />
-
-              {/* 回覆統計與排序標題 */}
-              <div className="flex items-center justify-between px-5 py-4">
-                <span className="text-sm font-black text-gray-800 dark:text-white">
-                  相關回覆共{commentDetailTarget.replies?.length || 0}條
-                </span>
-                <div className="flex items-center space-x-1 text-xs font-bold text-gray-400 hover:text-orange-500 cursor-pointer transition-colors">
-                  <span>按時間</span>
-                  <ListFilter size={14} />
-                </div>
-              </div>
-
-              {/* 回覆列表 */}
-              <div className="px-5 pb-24">
-                {commentDetailTarget.replies && commentDetailTarget.replies.length > 0 ? (
-                  commentDetailTarget.replies.map((reply) => (
-                    <CommentItem key={reply.id} comment={reply} isReply={true} />
-                  ))
-                ) : (
-                  <div className="py-12 flex flex-col items-center justify-center space-y-2 opacity-30">
-                    <MessageSquare size={32} />
-                    <p className="text-xs font-black">暫無相關回覆</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 底部輸入框固定在詳情抽屜下方 */}
-            <div className="absolute bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-100 dark:border-white/5 p-4 safe-bottom flex flex-col z-[170]">
-              {/* 當在詳情框且有特定子回覆對象時，顯示標識 */}
+            <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-100 dark:border-white/5 p-4 safe-bottom flex flex-col z-[110]">
               {replyingTo && (
                 <div className="flex items-center justify-between bg-orange-50/50 dark:bg-orange-500/10 px-3 py-1.5 rounded-t-xl border-x border-t border-orange-100 dark:border-white/5 animate-in slide-in-from-bottom-2">
                   <span className="text-[10px] font-black text-orange-600 flex items-center">
@@ -1000,7 +1179,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
                     ref={commentInputRef}
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
-                    placeholder={replyingTo ? `回覆給 @${replyingTo.author}...` : `回覆給 @${commentDetailTarget.author}...`}
+                    placeholder={replyingTo ? `回覆給 @${replyingTo.author}...` : "說點溫馨的話吧..."}
                     className="bg-transparent w-full text-xs font-bold focus:outline-none py-2 dark:text-white"
                   />
                 </div>
@@ -1014,101 +1193,194 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
-      {viewingImage && (
-        <div className="fixed inset-0 z-[200] bg-black flex items-center justify-center animate-fade-in" onClick={() => setViewingImage(null)}>
-          <button className="absolute top-8 right-6 text-white w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full"><X size={24} /></button>
-          {viewingImage.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (  // 检查是否为视频文件
-            <video
-              src={viewingImage}
-              className="max-w-full max-h-full object-contain animate-zoom-in"
-              controls
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <img src={`${url_base}${viewingImage}`} className="max-w-full max-h-full object-contain animate-zoom-in" alt="Fullscreen View" />
-          )}
-        </div>
-      )}
+      {/* 評論詳情框 (仿B站底部署) */}
+      {targetComment && (
+        <div className={`fixed inset-0 z-[160] flex flex-col items-center justify-end ${isCommentDetailClosing ? 'pointer-events-none' : ''}`}>
+          <div className={`absolute inset-0 bg-black/60 transition-opacity duration-300 ${isCommentDetailClosing ? 'opacity-0' : 'opacity-100'}`} onClick={() => setCommentDetailId(null)} />
 
-      {showCreateModal && (
-        <div className="fixed inset-0 z-[110] flex flex-col justify-end">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => { setShowCreateModal(false); if (onModalClose) onModalClose(); }} />
-          <div className="relative max-w-md mx-auto w-full bg-white dark:bg-slate-900 rounded-t-[32px] p-6 space-y-6 shadow-2xl animate-slide-up pb-12 overflow-y-auto max-h-[90vh]">
-            <div className="flex justify-between items-center"><div className="flex items-center space-x-3"><div className="w-9 h-9 bg-orange-500 text-white rounded-xl flex items-center justify-center"><Send size={18} /></div><h3 className="text-lg font-black dark:text-white">發布新動態</h3></div><button onClick={() => { setShowCreateModal(false); if (onModalClose) onModalClose(); }} className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-slate-800 text-gray-400"><X size={20} /></button></div>
-            <div className="space-y-4">
-              <div className="relative">
-                <textarea
-                  value={postContent}
-                  onChange={(e) => setPostContent(e.target.value)}
-                  placeholder="這一刻想說點什麼呢... (支持使用 #標籤)"
-                  rows={4}
-                  className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-white/5 rounded-2xl px-5 py-4 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-orange-500/50 resize-none dark:text-white"
-                />
-                <button onClick={handleBeautify} disabled={!postContent || isBeautifying} className="absolute bottom-3 right-3 bg-indigo-500 text-white px-3 py-2 rounded-xl shadow-lg disabled:opacity-30 active:scale-95 transition-all flex items-center space-x-2">
-                  {isBeautifying ? <RefreshCw className="animate-spin" size={12} /> : <Wand2 size={12} />}
-                  <span className="text-[10px] font-black uppercase tracking-tight">AI 美化</span>
-                </button>
+          <div className={`relative w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[20px] flex flex-col max-h-[85vh] transition-transform duration-300 shadow-2xl ${isCommentDetailClosing ? 'translate-y-full' : 'translate-y-0'}`}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-white/5">
+              <span className="font-black text-gray-800 dark:text-white">評論詳情</span>
+              <button onClick={() => setCommentDetailId(null)} className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-800 dark:hover:text-white transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto scrollbar-hide">
+              {/* 被回覆的原評論 */}
+              <div className="p-5">
+                <CommentItem comment={targetComment} isReply={false} />
               </div>
 
-              {/* 圖片上傳預覽區域 */}
-              <div className="grid grid-cols-3 gap-2">
-                {selectedImages.map((img, i) => {
-                  // 检查对应的原始文件是否为视频
-                  const correspondingFile = selectedImgDataSet[i];
-                  const isVideo = correspondingFile && correspondingFile.type.startsWith('video/');
-                  return (
-                    <div key={i} className="relative aspect-square rounded-2xl overflow-hidden border border-gray-100 dark:border-white/5 group">
-                      {isVideo ? (  // 使用原始文件类型判断是否为视频
-                        <video
-                          src={img}
-                          className="w-full h-full object-cover"
-                          controls={false}
-                          muted
-                        />
-                      ) : (
-                        <img src={img} className="w-full h-full object-cover" alt="Preview" />
-                      )}
-                      <button
-                        onClick={() => removeSelectedImage(i)}
-                        className="absolute top-1 right-1 w-6 h-6 bg-black/50 text-white rounded-full flex items-center justify-center backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  );
-                })}
+              <div className="h-2 bg-gray-100 dark:bg-slate-800/50 w-full" />
 
-                {selectedImages.length < 9 && (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="aspect-square rounded-2xl bg-gray-50 dark:bg-slate-800 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-gray-400 hover:text-orange-500 hover:border-orange-200 transition-all active:scale-95"
-                  >
-                    <Plus size={24} />
-                    <span className="text-[9px] font-black mt-1 uppercase">{selectedImages.length}/9</span>
-                  </button>
+              <div className="flex items-center justify-between px-5 py-4">
+                <span className="text-sm font-black text-gray-800 dark:text-white">
+                  相關回覆共{targetComment.replies?.length || 0}條
+                </span>
+                <div className="flex items-center space-x-1 text-xs font-bold text-gray-400 hover:text-orange-500 cursor-pointer transition-colors">
+                  <span>按時間</span>
+                  <ListFilter size={14} />
+                </div>
+              </div>
+
+              <div className="px-5 pb-24">
+                {targetComment.replies && targetComment.replies.length > 0 ? (
+                  <>
+                    {targetComment.replies.map((reply) => (
+                      <CommentItem key={reply.id} comment={reply} isReply={true} />
+                    ))}
+
+                    {hasMoreReplies ? (
+                      <button onClick={handleLoadMoreReplies} disabled={isLoadingMoreReplies}
+                        className={`w-full h-10 mt-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center space-x-1.5 ${isLoadingMoreReplies ? 'bg-white/50 dark:bg-slate-800/30 text-blue-400 cursor-not-allowed' : 'bg-white/95 dark:bg-slate-900/95 text-blue-600 hover:text-blue-700 active:scale-95 shadow-none dark:shadow-none backdrop-blur-md'}`} >
+                        {isLoadingMoreReplies ? (<> <Loader2 size={16} className="animate-spin" /> <span>加載中...</span> </>) : (<> <ChevronDown size={16} /> <span>加載更多回覆</span> </>)}
+                      </button>
+                    ) : (
+                      <p className="text-center text-blue-400 text-[10px] font-black uppercase tracking-widest py-3 mt-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md">
+                        暫無更多回覆
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="py-12 flex flex-col items-center justify-center space-y-2 opacity-40">
+                    <MessageSquare size={32} className="text-blue-400" />
+                    <p className="text-xs font-black text-blue-500">暫無相關回覆</p>
+                  </div>
                 )}
               </div>
+            </div>
 
-              <div className="flex items-center space-x-3 pt-2">
-                <button onClick={() => fileInputRef.current?.click()} className="w-12 h-12 rounded-xl bg-gray-50 dark:bg-slate-800 flex items-center justify-center text-gray-500 hover:text-orange-500 transition-colors border border-gray-100 dark:border-white/5">
-                  <Camera size={22} />
-                </button>
-                <button
-                  onClick={handlePost}
-                  disabled={isPosting || (postContent.trim() === '' && selectedImages.length === 0)}
-                  className="flex-1 h-12 bg-orange-500 text-white rounded-xl font-black shadow-xl shadow-orange-300 dark:shadow-none flex items-center justify-center space-x-2 disabled:opacity-50 active:scale-95 transition-transform"
-                >
-                  {isPosting ? <RefreshCw className="animate-spin" size={18} /> : <><Send size={18} /><span>發布到社群</span></>}
+            {/* 底部輸入框 */}
+            <div className="absolute bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-100 dark:border-white/5 p-4 safe-bottom flex flex-col z-[170]">
+              {replyingTo && (
+                <div className="flex items-center justify-between bg-orange-50/50 dark:bg-orange-500/10 px-3 py-1.5 rounded-t-xl border-x border-t border-orange-100 dark:border-white/5 animate-in slide-in-from-bottom-2">
+                  <span className="text-[10px] font-black text-orange-600 flex items-center">
+                    <Reply size={12} className="mr-1" /> 正在回覆 @{replyingTo.author}
+                  </span>
+                  <button onClick={() => setReplyingTo(null)} className="text-gray-400 p-1"><X size={12} /></button>
+                </div>
+              )}
+              <div className="flex items-center space-x-3">
+                <div className={`flex-1 flex items-center bg-gray-100 dark:bg-slate-800/80 rounded-2xl px-4 py-2 border border-gray-200/50 dark:border-white/5 ${replyingTo ? 'rounded-tl-none' : ''}`}>
+                  <Smile size={20} className="text-gray-400 mr-2" />
+                  <input
+                    ref={commentInputRef}
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    placeholder={replyingTo ? `回覆給 @${replyingTo.author}...` : (targetComment ? `回覆給 @${targetComment.author}...` : "說點溫馨的話吧...")}
+                    className="bg-transparent w-full text-xs font-bold focus:outline-none py-2 dark:text-white"
+                  />
+                </div>
+                <button onClick={handleAddComment} disabled={!newComment.trim()}
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all ${newComment.trim() ? 'bg-orange-500 text-white shadow-lg active:scale-95' : 'bg-gray-100 dark:bg-slate-800 text-gray-300 dark:text-slate-600 shadow-inner'}`} >
+                  <Send size={18} />
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
-    </div>
+
+      {
+        viewingImage && (
+          <div className="fixed inset-0 z-[200] bg-black flex items-center justify-center animate-fade-in" onClick={() => setViewingImage(null)}>
+            <button className="absolute top-8 right-6 text-white w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full"><X size={24} /></button>
+            {viewingImage.match(/\.(mp4|webm|ogg|mov|avi|wmv|flv|mkv)$/i) ? (  // 检查是否为视频文件
+              <video
+                src={viewingImage}
+                className="max-w-full max-h-full object-contain animate-zoom-in"
+                controls
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <img src={`${url_base}${viewingImage}`} className="max-w-full max-h-full object-contain animate-zoom-in" alt="Fullscreen View" />
+            )}
+          </div>
+        )
+      }
+
+      {
+        showCreateModal && (
+          <div className="fixed inset-0 z-[110] flex flex-col justify-end">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => { setShowCreateModal(false); if (onModalClose) onModalClose(); }} />
+            <div className="relative max-w-md mx-auto w-full bg-white dark:bg-slate-900 rounded-t-[32px] p-6 space-y-6 shadow-2xl animate-slide-up pb-12 overflow-y-auto max-h-[90vh]">
+              <div className="flex justify-between items-center"><div className="flex items-center space-x-3"><div className="w-9 h-9 bg-orange-500 text-white rounded-xl flex items-center justify-center"><Send size={18} /></div><h3 className="text-lg font-black dark:text-white">發布新動態</h3></div><button onClick={() => { setShowCreateModal(false); if (onModalClose) onModalClose(); }} className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-slate-800 text-gray-400"><X size={20} /></button></div>
+              <div className="space-y-4">
+                <div className="relative">
+                  <textarea
+                    value={postContent}
+                    onChange={(e) => setPostContent(e.target.value)}
+                    placeholder="這一刻想說點什麼呢... (支持使用 #標籤)"
+                    rows={4}
+                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-white/5 rounded-2xl px-5 py-4 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-orange-500/50 resize-none dark:text-white"
+                  />
+                  <button onClick={handleBeautify} disabled={!postContent || isBeautifying} className="absolute bottom-3 right-3 bg-indigo-500 text-white px-3 py-2 rounded-xl shadow-lg disabled:opacity-30 active:scale-95 transition-all flex items-center space-x-2">
+                    {isBeautifying ? <RefreshCw className="animate-spin" size={12} /> : <Wand2 size={12} />}
+                    <span className="text-[10px] font-black uppercase tracking-tight">AI 美化</span>
+                  </button>
+                </div>
+
+                {/* 圖片上傳預覽區域 */}
+                <div className="grid grid-cols-3 gap-2">
+                  {selectedImages.map((img, i) => {
+                    // 检查对应的原始文件是否为视频
+                    const correspondingFile = selectedImgDataSet[i];
+                    const isVideo = correspondingFile && correspondingFile.type.startsWith('video/');
+                    return (
+                      <div key={i} className="relative aspect-square rounded-2xl overflow-hidden border border-gray-100 dark:border-white/5 group">
+                        {isVideo ? (  // 使用原始文件类型判断是否为视频
+                          <video
+                            src={img}
+                            className="w-full h-full object-cover"
+                            controls={false}
+                            muted
+                          />
+                        ) : (
+                          <img src={img} className="w-full h-full object-cover" alt="Preview" />
+                        )}
+                        <button
+                          onClick={() => removeSelectedImage(i)}
+                          className="absolute top-1 right-1 w-6 h-6 bg-black/50 text-white rounded-full flex items-center justify-center backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+
+                  {selectedImages.length < 9 && (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="aspect-square rounded-2xl bg-gray-50 dark:bg-slate-800 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-gray-400 hover:text-orange-500 hover:border-orange-200 transition-all active:scale-95"
+                    >
+                      <Plus size={24} />
+                      <span className="text-[9px] font-black mt-1 uppercase">{selectedImages.length}/9</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center space-x-3 pt-2">
+                  <button onClick={() => fileInputRef.current?.click()} className="w-12 h-12 rounded-xl bg-gray-50 dark:bg-slate-800 flex items-center justify-center text-gray-500 hover:text-orange-500 transition-colors border border-gray-100 dark:border-white/5">
+                    <Camera size={22} />
+                  </button>
+                  <button
+                    onClick={handlePost}
+                    disabled={isPosting || (postContent.trim() === '' && selectedImages.length === 0)}
+                    className="flex-1 h-12 bg-orange-500 text-white rounded-xl font-black shadow-xl shadow-orange-300 dark:shadow-none flex items-center justify-center space-x-2 disabled:opacity-50 active:scale-95 transition-transform"
+                  >
+                    {isPosting ? <RefreshCw className="animate-spin" size={18} /> : <><Send size={18} /><span>發布到社群</span></>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
+    </div >
   );
 };
 

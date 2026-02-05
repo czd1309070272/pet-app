@@ -1,5 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
 import re
+import jwt
 from fastapi import APIRouter
 from .schemas import JsonTool, LoginAccount, RegisterRequest
 from sql.mysql_DB import db
@@ -12,6 +14,15 @@ logger = logging.getLogger(__name__)
 
 # 创建API路由器
 router = APIRouter()  # 使用APIRouter而不是FastAPI()
+
+JWT_SECRET = os.getenv("JWT_SECRET", "change_me")
+JWT_EXPIRES_MIN = int(os.getenv("JWT_EXPIRES_MIN", "1440"))
+JWT_ALGORITHM = "HS256"
+def create_access_token(payload: dict) -> str:
+    expires_at = datetime.utcnow() + timedelta(minutes=JWT_EXPIRES_MIN)
+    data = dict(payload)
+    data.update({"exp": expires_at})
+    return jwt.encode(data, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def get_user_field_type(username: str) -> str:
     """判断用户名是邮箱还是手机号"""
@@ -281,9 +292,9 @@ async def register(request_data: RegisterRequest):
         logger.info(f"用户名字段类型: {field_type}")
         
         if field_type == "email":
-            sql = "INSERT INTO users (username,email, nickname, password_hash,created_at) VALUES (%s, %s, %s, %s, NOW())"
+            sql = "INSERT INTO users (username,email, nickname, password_hash,created_at,token) VALUES (%s, %s, %s, %s, NOW(),%s)"
         elif field_type == "phone":
-            sql = "INSERT INTO users (username,phone, nickname, password_hash,created_at) VALUES (%s, %s, %s, %s, NOW())"
+            sql = "INSERT INTO users (username,phone, nickname, password_hash,created_at,token) VALUES (%s, %s, %s, %s, NOW(),%s)"
         else:
             # 理论上不会走到这里，因为 verify_username_format 已校验
             logger.error("不支持的用户名类型")
@@ -291,8 +302,11 @@ async def register(request_data: RegisterRequest):
         
         logger.info(f"执行插入SQL: {sql}")
         
+        # 生成 token
+        token = create_access_token({"sub": username, "user_id": 0})  # 临时 token，后续会更新
+        
         # 执行插入操作
-        result = db.execute(sql, (username, username, nickname, password_hash))
+        result = db.execute(sql, (username, username, nickname, password_hash, token))
         logger.info(f"插入操作结果: {result}")
         
         # 如果插入成功，查询新插入的用户ID
@@ -304,11 +318,15 @@ async def register(request_data: RegisterRequest):
                 query_sql = "SELECT * FROM users WHERE phone = %s"
             else:
                 query_sql = "SELECT * FROM users WHERE username = %s"
-            
+
             logger.info(f"查询新用户ID，SQL: {query_sql}，参数: ({username},)")
             new_user = db.query_one(query_sql, (username,))
             user_id = new_user['id'] if new_user else None
             logger.info(f"获取到的新用户ID: {user_id}")
+            #  生成 token
+            token = create_access_token({"sub": username, "user_id": new_user['id']})
+            # 可选：将 token 存储在数据库
+            db.execute("UPDATE users SET token = %s WHERE id = %s", (token, user_id))
         else:
             user_id = None
             logger.info("插入操作失败，用户ID为None")

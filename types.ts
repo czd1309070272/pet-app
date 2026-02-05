@@ -235,6 +235,7 @@ export interface Comment {
   replyToName?: string;
   replies?: Comment[];
   replyToContent?: string;  // 添加被回复内容字段
+  top_comment_id?: string;  // 添加顶级评论ID字段
 }
 
 export interface Post {
