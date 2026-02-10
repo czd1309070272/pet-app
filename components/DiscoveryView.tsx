@@ -51,8 +51,13 @@ const DiscoveryView: React.FC<DiscoveryViewProps> = ({ onNavigate }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
   const [refreshNoData, setRefreshNoData] = useState(false);
+  // 新增：底部加载状态
+  const [isBtnLoadingMore, setIsBtnLoadingMore] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
+
+  // 新增：哨兵元素引用
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // 搜索输入本地状态
   const [searchInput, setSearchInput] = useState('');

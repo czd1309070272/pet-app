@@ -120,6 +120,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
   // 下拉刷新狀態
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
+  const [isBtnLoadingMore, setIsBtnLoadingMore] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
 
@@ -232,6 +233,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
   const loadMorePosts = async () => {
     if (!posts.length || !hasMoreRef.current) return; // ✅ 改这里
     // setIsLoading(true);
+    setIsBtnLoadingMore(true);
     try {
       const lastPost = posts[posts.length - 1];
       const limit = getLimit();
@@ -261,6 +263,7 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
       console.error('Failed to load more posts:', err);
     } finally {
       // setIsLoading(false);
+      setIsBtnLoadingMore(false);
     }
   };
 
@@ -1051,12 +1054,13 @@ const CommunityView: React.FC<CommunityViewProps> = ({ onBack, onNavigate, initi
               {/* 👇 上拉加载哨兵 */}
               {!isLoading && hasMore && <div ref={sentinelRef} className="h-px z-10 opacity-0 dark:bg-slate-900" />}
               {/* 加载中指示器 */}
-              {isLoading && !isRefreshing && (
-                <div className="h-full flex items-center justify-center">
-                  <div className="py-6 flex items-center justify-center text-blue-500">
-                    <Loader2 className="animate-spin text-blue-500 mr-2" size={20} />
-                    正在加載請稍後...
-                  </div>
+              {/* 👇 底部加载指示器 —— 新样式 */}
+              {isBtnLoadingMore && (
+                <div className="py-4 flex flex-col items-center justify-center space-y-1">
+                  <Loader2 className="animate-spin text-blue-500" size={18} />
+                  <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">
+                    正在同步數據...
+                  </span>
                 </div>
               )}
               {/* 没有更多内容提示 */}

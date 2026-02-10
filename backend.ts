@@ -257,9 +257,15 @@ export const getCurrentUser = async (): Promise<UserInfo | null> => {
   const userInfo = GetDataFromCookie('UserInfo');
 
   const token = userInfo.token;
-  if (!token || token == "") return null;
+  if (!token || token == "") {
+    await logout();
+    return null;
+  }
 
-  if (!userInfo) return null;
+  if (!userInfo) {
+    await logout();
+    return null;
+  }
 
   // 检查 VIP 是否过期
   const { vipExpiry } = userInfo;
