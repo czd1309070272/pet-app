@@ -20,16 +20,16 @@ class DatabaseManager:
         if self._initialized:
             return
              
-        # self.host = '47.86.32.214'
-        # self.user = 'nb_user'
-        # self.password = 'czd888'
-        # self.database = 'pawpal'
-        # self.pool = None
-        self.host = '127.0.0.1'
-        self.user = 'root'
-        self.password = '123456'
+        self.host = '47.86.32.214'
+        self.user = 'nb_user'
+        self.password = 'czd888'
         self.database = 'pawpal'
         self.pool = None
+        # self.host = '127.0.0.1'
+        # self.user = 'root'
+        # self.password = '123456'
+        # self.database = 'pawpal'
+        # self.pool = None
         
         try:
             # 创建连接池（推荐！支持高并发）
