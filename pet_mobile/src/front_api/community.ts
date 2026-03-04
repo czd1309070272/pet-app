@@ -1,8 +1,12 @@
 /**
- * 社群模块 API - 单独接口文件，先使用 Mock 数据
- * 与后端 api_CommunityView 对应，后续可改为真实请求
+ * 社群模块 API - 与后端 api_CommunityView / api_CommunityHistoryView 对应
+ * 支持 Mock 与真实请求切换，请求/响应与后端 schemas 对齐
  */
 import type { Post, Comment, CommunityHistoryItem } from '../types';
+import { API_BASE_URL } from './config';
+
+/** 是否使用 Mock 数据（true=Mock，false=真实后端请求） */
+const USE_MOCK = true;
 
 // ---------- 请求/响应类型（与后端 schemas 对齐） ----------
 
@@ -80,6 +84,104 @@ export interface CommunityApiResponse<T = unknown> {
   code: number;
   data: T | null;
   msg: string;
+}
+
+/** 后端 Comment 格式 */
+interface BackendComment {
+  id: number | string;
+  author: string;
+  avatar: string;
+  content: string;
+  time: string;
+  likes: number;
+  isLiked: boolean;
+  isVIP?: boolean;
+  vipLevel?: string;
+  replyToName?: string;
+  replies?: BackendComment[];
+  replyToContent?: string;
+  top_comment_id?: number | string;
+}
+
+/** 后端 newPost 格式（无 videos，后端仅 images） */
+interface BackendPost {
+  id: number;
+  author: string;
+  avatar: string;
+  time: string;
+  content: string;
+  fullContent: string;
+  images: string[];
+  likes: number;
+  comments: number;
+  isLiked: boolean;
+  isV?: boolean;
+  isVIP?: boolean;
+  vipLevel?: string;
+  userTags: string[];
+  commentList: BackendComment[];
+}
+
+/** 将后端 Post 转为前端 Post */
+function mapBackendPostToPost(b: BackendPost): Post {
+  const images = b.images ?? [];
+  const videos: string[] = [];
+  const imgs: string[] = [];
+  for (const u of images) {
+    if (/\.(mp4|mov|webm|avi|mkv|m4v|3gp|ogg|wmv|flv)(\?|$)/i.test((u ?? '').split('?')[0])) {
+      videos.push(u);
+    } else {
+      imgs.push(u);
+    }
+  }
+  return {
+    id: b.id,
+    author: b.author ?? '未知用户',
+    avatar: b.avatar ?? '',
+    time: b.time ?? '',
+    content: b.content ?? '',
+    fullContent: b.fullContent ?? b.content ?? '',
+    images: imgs,
+    videos: videos.length ? videos : undefined,
+    likes: b.likes ?? 0,
+    comments: b.comments ?? 0,
+    isLiked: b.isLiked ?? false,
+    isV: b.isV ?? false,
+    isVIP: b.isVIP ?? false,
+    vipLevel: b.vipLevel,
+    userTags: b.userTags ?? [],
+    commentList: (b.commentList ?? []).map(mapBackendCommentToComment),
+  };
+}
+
+/** 将后端 Comment 转为前端 Comment */
+function mapBackendCommentToComment(c: BackendComment): Comment {
+  return {
+    id: String(c.id),
+    author: c.author ?? '未知用户',
+    avatar: c.avatar ?? '',
+    content: c.content ?? '',
+    time: c.time ?? '',
+    likes: c.likes ?? 0,
+    isLiked: c.isLiked ?? false,
+    isVIP: c.isVIP,
+    vipLevel: c.vipLevel,
+    replyToName: c.replyToName,
+    replyToContent: c.replyToContent,
+    replies: (c.replies ?? []).map(mapBackendCommentToComment),
+    top_comment_id: c.top_comment_id != null ? String(c.top_comment_id) : undefined,
+  };
+}
+
+/** 发起后端请求并解析 JsonTool 响应 */
+async function request<T>(url: string, body: Record<string, unknown>): Promise<{ code: number; data: T | null; msg: string }> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as CommunityApiResponse<T>;
+  return { code: json.code ?? 500, data: json.data ?? null, msg: json.msg ?? '请求失败' };
 }
 
 // ---------- Mock 数据 ----------
@@ -268,26 +370,54 @@ function countAllComments(list: Comment[]): number {
 
 /** 获取社群帖子列表（分页：数量 + 偏移） */
 export async function getCommunityPosts(params: CommunityListParams): Promise<Post[]> {
-  await delay(400);
-  const { num = 20, offset = 0, exclude_post_ids = [] } = params;
-  const filtered = mockPosts.filter((p) => !exclude_post_ids.includes(p.id));
-  return filtered.slice(offset, offset + num);
+  if (USE_MOCK) {
+    await delay(400);
+    const { num = 20, offset = 0, exclude_post_ids = [] } = params;
+    const filtered = mockPosts.filter((p) => !exclude_post_ids.includes(p.id));
+    return filtered.slice(offset, offset + num);
+  }
+  const { token, num = 20, offset = 0, exclude_post_ids = [] } = params;
+  const page = offset === 0 ? 1 : Math.floor(offset / num) + 1;
+  const { code, data, msg } = await request<{ posts: BackendPost[] }>(
+    `${API_BASE_URL}/communityview/get_community_posts`,
+    { token, num, offset: page, exclude_post_ids }
+  );
+  if (code !== 200 || !data?.posts) throw new Error(msg || '获取帖子失败');
+  return data.posts.map(mapBackendPostToPost);
 }
 
 /** 获取社群帖子列表（按时间节点分页） */
 export async function getCommunityPostsByTime(params: CommunityListByTimeParams): Promise<Post[]> {
-  await delay(400);
-  const { limit = 20, exclude_post_ids = [] } = params;
-  const filtered = mockPosts.filter((p) => !exclude_post_ids.includes(p.id));
-  return filtered.slice(0, limit);
+  if (USE_MOCK) {
+    await delay(400);
+    const { limit = 20, exclude_post_ids = [] } = params;
+    const filtered = mockPosts.filter((p) => !exclude_post_ids.includes(p.id));
+    return filtered.slice(0, limit);
+  }
+  const { token, limit = 20, timenode, exclude_post_ids = [], datatype } = params;
+  const { code, data, msg } = await request<{ posts: BackendPost[] }>(
+    `${API_BASE_URL}/communityview/get_community_posts_by_time`,
+    { token, limit, timenode: timenode ?? null, exclude_post_ids, datatype }
+  );
+  if (code !== 200 || !data?.posts) throw new Error(msg || '获取帖子失败');
+  return data.posts.map(mapBackendPostToPost);
 }
 
 /** 获取帖子详情（含评论树） */
 export async function getPostDetail(params: CommunityPostDetailParams): Promise<Post | null> {
-  await delay(300);
-  const post = mockPosts.find((p) => p.id === params.post_id);
-  if (!post) return null;
-  return { ...post, fullContent: post.fullContent ?? post.content };
+  if (USE_MOCK) {
+    await delay(300);
+    const post = mockPosts.find((p) => p.id === params.post_id);
+    if (!post) return null;
+    return { ...post, fullContent: post.fullContent ?? post.content };
+  }
+  const { token, post_id, top_limit, replies_limit } = params;
+  const { code, data, msg } = await request<{ post: BackendPost }>(
+    `${API_BASE_URL}/communityview/get_post_detail`,
+    { token, post_id, top_limit, replies_limit }
+  );
+  if (code !== 200 || !data?.post) return null;
+  return mapBackendPostToPost(data.post);
 }
 
 /** 获取帖子评论（分页） */
@@ -296,136 +426,193 @@ export async function getPostComments(_params: CommunityCommentsParams): Promise
   return [];
 }
 
-/** 发布新帖（图片+视频合计最多 9 个，可同时传 images 与 videos） */
+/** 发布新帖（图片+视频合计最多 9 个；后端仅支持 images，视频 URL 合并到 images） */
 export async function createPost(params: CreatePostParams): Promise<Post | null> {
-  await delay(500);
-  const { content, images = [], videos = [], tags = [] } = params;
-  const post: Post = {
-    id: mockPosts.length + 100 + Math.floor(Math.random() * 1000),
-    author: MOCK_USER_NAME,
-    avatar: MOCK_USER_AVATAR,
-    time: '剛剛',
-    content: content.length > 80 ? content.slice(0, 80) + '...' : content,
-    fullContent: content,
-    images: images ?? [],
-    videos: videos?.length ? videos : undefined,
-    likes: 0,
-    comments: 0,
-    isLiked: false,
-    userTags: tags,
-    commentList: [],
-  };
-  mockPosts = [post, ...mockPosts];
-  return post;
-}
-
-/** 点赞帖子或评论 */
-export async function likePost(params: LikeTargetParams): Promise<{ likes: number; isLiked: boolean }> {
-  await delay(150);
-  if (params.target_type === 'post') {
-    const post = mockPosts.find((p) => p.id === params.target_id);
-    if (!post) return { likes: 0, isLiked: false };
-    post.isLiked = !post.isLiked;
-    post.likes += post.isLiked ? 1 : -1;
-    return { likes: post.likes, isLiked: post.isLiked };
-  }
-  for (const post of mockPosts) {
-    const find = (list: Comment[]): Comment | null => {
-      for (const c of list) {
-        if (String(c.id) === String(params.target_id)) return c;
-        if (c.replies?.length) {
-          const r = find(c.replies);
-          if (r) return r;
-        }
-      }
-      return null;
+  if (USE_MOCK) {
+    await delay(500);
+    const { content, images = [], videos = [], tags = [] } = params;
+    const post: Post = {
+      id: mockPosts.length + 100 + Math.floor(Math.random() * 1000),
+      author: MOCK_USER_NAME,
+      avatar: MOCK_USER_AVATAR,
+      time: '剛剛',
+      content: content.length > 80 ? content.slice(0, 80) + '...' : content,
+      fullContent: content,
+      images: images ?? [],
+      videos: videos?.length ? videos : undefined,
+      likes: 0,
+      comments: 0,
+      isLiked: false,
+      userTags: tags,
+      commentList: [],
     };
-    const c = find(post.commentList ?? []);
-    if (c) {
-      c.isLiked = !c.isLiked;
-      c.likes = (c.likes ?? 0) + (c.isLiked ? 1 : -1);
-      return { likes: c.likes, isLiked: c.isLiked };
-    }
+    mockPosts = [post, ...mockPosts];
+    return post;
   }
-  return { likes: 0, isLiked: false };
+  const { token, content, images = [], videos = [], tags = [] } = params;
+  const allMedia = [...(images ?? []), ...(videos ?? [])];
+  const { code, data, msg } = await request<{ post: BackendPost }>(
+    `${API_BASE_URL}/communityview/add_new_community`,
+    { token, content: content.trim(), images: allMedia, tags: tags ?? [] }
+  );
+  if (code !== 200 || !data?.post) return null;
+  return mapBackendPostToPost(data.post);
 }
 
-/** 发表评论（顶级或回复）。仅两级：主评论 + 子评论（子评论的回复与子评论同级） */
-export async function commentPost(params: CommentPostParams): Promise<Comment | null> {
-  await delay(300);
-  const post = mockPosts.find((p) => p.id === params.post_id);
-  if (!post) return null;
-  const isReply = params.parent_id != null;
-  const rootId = params.root_id ?? params.parent_id;
-  const comment: Comment = {
-    id: (isReply ? 'r_' : 'c_') + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
-    author: MOCK_USER_NAME,
-    avatar: MOCK_USER_AVATAR,
-    content: params.content,
-    time: '剛剛',
-    likes: 0,
-    isLiked: false,
-    replyToName: undefined,
-    replies: [],
-    top_comment_id: rootId ?? undefined,
-  };
-  post.commentList = post.commentList ?? [];
-  if (isReply) {
-    const parentId = params.parent_id!;
-    let main = post.commentList.find((c) => String(c.id) === String(rootId));
-    if (!main) {
-      for (const m of post.commentList) {
-        if (String(m.id) === String(parentId)) {
-          main = m;
-          break;
+/** 点赞帖子或评论（后端 target_type 需为 'POST' | 'COMMENT'） */
+export async function likePost(params: LikeTargetParams): Promise<{ likes: number; isLiked: boolean }> {
+  if (USE_MOCK) {
+    await delay(150);
+    if (params.target_type === 'post') {
+      const post = mockPosts.find((p) => p.id === params.target_id);
+      if (!post) return { likes: 0, isLiked: false };
+      post.isLiked = !post.isLiked;
+      post.likes += post.isLiked ? 1 : -1;
+      return { likes: post.likes, isLiked: post.isLiked };
+    }
+    for (const post of mockPosts) {
+      const find = (list: Comment[]): Comment | null => {
+        for (const c of list) {
+          if (String(c.id) === String(params.target_id)) return c;
+          if (c.replies?.length) {
+            const r = find(c.replies);
+            if (r) return r;
+          }
         }
-        if ((m.replies ?? []).some((r) => String(r.id) === String(parentId))) {
-          main = m;
-          break;
-        }
+        return null;
+      };
+      const c = find(post.commentList ?? []);
+      if (c) {
+        c.isLiked = !c.isLiked;
+        c.likes = (c.likes ?? 0) + (c.isLiked ? 1 : -1);
+        return { likes: c.likes, isLiked: c.isLiked };
       }
     }
-    const targetReplies = main ? (main.replies ?? (main.replies = [])) : null;
-    if (targetReplies) {
-      const parent =
-        main && String(main.id) === String(parentId) ? main : targetReplies.find((r) => String(r.id) === String(parentId));
-      comment.replyToName = parent?.author ?? params.reply_to_name ?? undefined;
-      targetReplies.push(comment);
+    return { likes: 0, isLiked: false };
+  }
+  const targetType = params.target_type === 'post' ? 'POST' : 'COMMENT';
+  const targetId = typeof params.target_id === 'string' ? parseInt(params.target_id, 10) : params.target_id;
+  const { code, data, msg } = await request<{ like_count: number; is_liked: boolean }>(
+    `${API_BASE_URL}/communityview/like_post`,
+    { token: params.token, target_id: targetId, target_type: targetType }
+  );
+  if (code !== 200 || data == null) throw new Error(msg || '点赞失败');
+  return { likes: data.like_count, isLiked: data.is_liked };
+}
+
+/** 发表评论（顶级或回复）。仅两级：主评论 + 子评论 */
+export async function commentPost(params: CommentPostParams): Promise<Comment | null> {
+  if (USE_MOCK) {
+    await delay(300);
+    const post = mockPosts.find((p) => p.id === params.post_id);
+    if (!post) return null;
+    const isReply = params.parent_id != null;
+    const rootId = params.root_id ?? params.parent_id;
+    const comment: Comment = {
+      id: (isReply ? 'r_' : 'c_') + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
+      author: MOCK_USER_NAME,
+      avatar: MOCK_USER_AVATAR,
+      content: params.content,
+      time: '剛剛',
+      likes: 0,
+      isLiked: false,
+      replyToName: undefined,
+      replies: [],
+      top_comment_id: rootId != null ? String(rootId) : undefined,
+    };
+    post.commentList = post.commentList ?? [];
+    if (isReply) {
+      const parentId = params.parent_id!;
+      let main = post.commentList.find((c) => String(c.id) === String(rootId));
+      if (!main) {
+        for (const m of post.commentList) {
+          if (String(m.id) === String(parentId)) {
+            main = m;
+            break;
+          }
+          if ((m.replies ?? []).some((r) => String(r.id) === String(parentId))) {
+            main = m;
+            break;
+          }
+        }
+      }
+      const targetReplies = main ? (main.replies ?? (main.replies = [])) : null;
+      if (targetReplies) {
+        const parent =
+          main && String(main.id) === String(parentId) ? main : targetReplies.find((r) => String(r.id) === String(parentId));
+        comment.replyToName = parent?.author ?? params.reply_to_name ?? undefined;
+        targetReplies.push(comment);
+      } else {
+        post.commentList.push(comment);
+      }
     } else {
       post.commentList.push(comment);
     }
-  } else {
-    post.commentList.push(comment);
+    post.comments = countAllComments(post.commentList);
+    return comment;
   }
-  post.comments = countAllComments(post.commentList);
-  return comment;
+  const toInt = (v: number | string | null | undefined): number | undefined =>
+    v == null ? undefined : typeof v === 'number' ? v : parseInt(String(v), 10);
+  const { token, post_id, content, parent_id, reply_to_id, root_id } = params;
+  const body: Record<string, unknown> = { token, post_id, content: content.trim() };
+  if (parent_id != null) body.parent_id = toInt(parent_id) ?? parent_id;
+  if (reply_to_id != null) body.reply_to_id = toInt(reply_to_id) ?? reply_to_id;
+  if (root_id != null && String(root_id).trim()) body.root_id = String(root_id).trim();
+  const { code, data, msg } = await request<BackendComment>(
+    `${API_BASE_URL}/communityview/comment_post`,
+    body
+  );
+  if (code !== 200 || !data) return null;
+  return mapBackendCommentToComment(data);
 }
 
-/** 获取社群动态历史（浏览/点赞/评论） */
+/** 获取社群动态历史（合并点赞+评论记录；浏览记录后端暂未实现） */
 export async function getCommunityHistory(params: CommunityHistoryParams): Promise<CommunityHistoryItem[]> {
-  await delay(300);
-  const { limit = 20, offset = 0 } = params;
-  const mockHistory: CommunityHistoryItem[] = [
-    {
-      id: 'h1',
-      postId: 102,
-      author: '用戶',
-      authorAvatar: 'https://picsum.photos/seed/cu1/80',
-      contentSnippet: '今天天氣真好，帶狗狗出去跑跑～',
-      time: '2 小時前',
-      type: 'WATCH',
-      image: 'https://picsum.photos/seed/c1_0/400',
-    },
-    {
-      id: 'h2',
-      postId: 103,
-      author: '貓奴小美',
-      authorAvatar: 'https://picsum.photos/seed/cu4/80',
-      contentSnippet: '新開的罐頭，主子秒光盤～',
-      time: '5 小時前',
-      type: 'LIKE',
-      image: 'https://picsum.photos/seed/c2_0/400',
-    },
-  ];
-  return mockHistory.slice(offset, offset + limit);
+  if (USE_MOCK) {
+    await delay(300);
+    const { limit = 20, offset = 0 } = params;
+    const mockHistory: CommunityHistoryItem[] = [
+      {
+        id: 'h1',
+        postId: 102,
+        author: '用戶',
+        authorAvatar: 'https://picsum.photos/seed/cu1/80',
+        contentSnippet: '今天天氣真好，帶狗狗出去跑跑～',
+        time: '2 小時前',
+        type: 'WATCH',
+        image: 'https://picsum.photos/seed/c1_0/400',
+      },
+      {
+        id: 'h2',
+        postId: 103,
+        author: '貓奴小美',
+        authorAvatar: 'https://picsum.photos/seed/cu4/80',
+        contentSnippet: '新開的罐頭，主子秒光盤～',
+        time: '5 小時前',
+        type: 'LIKE',
+        image: 'https://picsum.photos/seed/c2_0/400',
+      },
+    ];
+    return mockHistory.slice(offset, offset + limit);
+  }
+  const { token, limit = 20, offset = 0 } = params;
+  const page = offset;
+  const [likeRes, commentRes] = await Promise.all([
+    request<{ result: CommunityHistoryItem[] }>(
+      `${API_BASE_URL}/communityhistoryview/get_like_record`,
+      { token, limit, offset: page }
+    ),
+    request<{ result: CommunityHistoryItem[] }>(
+      `${API_BASE_URL}/communityhistoryview/get_comment_record`,
+      { token, limit, offset: page }
+    ),
+  ]);
+  const likeList = likeRes.code === 200 && likeRes.data?.result ? likeRes.data.result : [];
+  const commentList = commentRes.code === 200 && commentRes.data?.result ? commentRes.data.result : [];
+  const merged: CommunityHistoryItem[] = [...likeList, ...commentList].sort((a, b) => {
+    const ta = new Date(a.time).getTime();
+    const tb = new Date(b.time).getTime();
+    return tb - ta;
+  });
+  return merged.slice(0, limit);
 }
