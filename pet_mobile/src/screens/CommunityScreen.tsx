@@ -20,8 +20,9 @@ import {
   Keyboard,
   InteractionManager,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, History, Send } from 'lucide-react-native';
+import { Search, History, Send, Image as ImageIcon, Video, X } from 'lucide-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { CommunityStackParamList } from '../navigation/types';
 import type { Post, Comment } from '../types';
@@ -75,6 +76,8 @@ export default function CommunityScreen({
   const [postMedia, setPostMedia] = useState<PostMediaItem[]>([]);
   const [isPosting, setIsPosting] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [showAddChoice, setShowAddChoice] = useState(false);
+  const [isOpeningPicker, setIsOpeningPicker] = useState(false);
 
   // 媒体查看
   const [viewingImages, setViewingImages] = useState<string[] | null>(null);
@@ -115,6 +118,7 @@ export default function CommunityScreen({
     if (isPosting) return;
     Keyboard.dismiss();
     setShowCreateModal(false);
+    setShowAddChoice(false);
     setTabBarVisible(true);
     setPostMedia([]);
   }, [isPosting, setTabBarVisible]);
@@ -137,7 +141,13 @@ export default function CommunityScreen({
     }
   }, [route?.params?.openPost, setTabBarVisible]);
 
-  // 提前请求相册权限，减少点击添加时等待
+  // 提前请求相册权限：进入社群页即请求，避免首次点击添加时长时间等待
+  useFocusEffect(
+    useCallback(() => {
+      ImagePicker.requestMediaLibraryPermissionsAsync();
+    }, [])
+  );
+
   useEffect(() => {
     if (showCreateModal) {
       ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -382,43 +392,69 @@ export default function CommunityScreen({
     [isAssetVideo]
   );
 
-  const pickImagesOnly = useCallback(() => {
-    if (postMedia.length >= MAX_MEDIA) {
-      Alert.alert('提示', `最多只能上传 ${MAX_MEDIA} 个文件（图片+视频合计）`);
-      return;
-    }
-    InteractionManager.runAfterInteractions(async () => {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') return;
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
-        allowsMultipleSelection: true,
-        quality: 0.8,
-        selectionLimit: MAX_MEDIA - postMedia.length,
-        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-      });
-      if (!result.canceled && result.assets?.length) {
-        appendAssetsToPostMedia(result.assets, 'image');
-      }
+  const pickImagesOnly = useCallback(async () => {
+    if (postMedia.length >= MAX_MEDIA) return;
+  
+    // 1. 立即关闭菜单，不再设置任何会导致 UI 剧烈波动的 Loading 状态
+    setShowAddChoice(false);
+    
+    // 2. 只有在真正调用系统函数前才设锁，且不显示 ActivityIndicator
+    // setIsOpeningPicker(true); // 建议暂时注释掉这个状态，看是否是它引起的卡顿
+  
+    // 3. 使用 requestAnimationFrame 避开渲染高峰
+    requestAnimationFrame(() => {
+      setTimeout(async () => {
+        try {
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: 'images',
+            allowsMultipleSelection: true,
+            quality: 0.2, // 极限压力测试：先调到最小
+            selectionLimit: MAX_MEDIA - postMedia.length,
+          });
+  
+          if (!result.canceled && result.assets) {
+            // 4. 追加图片也要放在下一帧，避免阻塞相册关闭动画
+            requestAnimationFrame(() => {
+              appendAssetsToPostMedia(result.assets, 'image');
+            });
+          }
+        } catch (e) {
+          console.warn(e);
+        } finally {
+          // setIsOpeningPicker(false);
+        }
+      }, 200); // 这里的延迟是给刚才追加的图片渲染留出时间
     });
   }, [postMedia.length, appendAssetsToPostMedia]);
-
-  const pickVideosOnly = useCallback(() => {
+  const pickVideosOnly = useCallback(async () => {
     if (postMedia.length >= MAX_MEDIA) {
       Alert.alert('提示', `最多只能上传 ${MAX_MEDIA} 个文件（图片+视频合计）`);
       return;
     }
+    const limit = MAX_MEDIA - postMedia.length;
+    setIsOpeningPicker(true);
+    setShowAddChoice(false);
     InteractionManager.runAfterInteractions(async () => {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') return;
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'videos',
-        allowsMultipleSelection: true,
-        selectionLimit: MAX_MEDIA - postMedia.length,
-        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-      });
-      if (!result.canceled && result.assets?.length) {
-        appendAssetsToPostMedia(result.assets, 'video');
+      try {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') return;
+        const pickerPromise = ImagePicker.launchImageLibraryAsync({
+          mediaTypes: 'videos',
+          allowsMultipleSelection: true,
+          selectionLimit: limit,
+          ...(Platform.OS === 'ios' && {
+            presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+          }),
+        });
+        const timeoutPromise = new Promise<ImagePicker.ImagePickerCanceledResult>((_, reject) =>
+          setTimeout(() => reject(new Error('PICKER_TIMEOUT')), 60000)
+        );
+        const result = await Promise.race([pickerPromise, timeoutPromise]);
+        if (!result.canceled && result.assets?.length) {
+          appendAssetsToPostMedia(result.assets, 'video');
+        }
+      } finally {
+        setIsOpeningPicker(false);
       }
     });
   }, [postMedia.length, appendAssetsToPostMedia]);
@@ -428,12 +464,8 @@ export default function CommunityScreen({
       Alert.alert('提示', `最多只能上传 ${MAX_MEDIA} 个文件（图片+视频合计）`);
       return;
     }
-    Alert.alert('添加媒体', '请选择要添加的内容', [
-      { text: '添加图片', onPress: pickImagesOnly },
-      { text: '添加视频', onPress: pickVideosOnly },
-      { text: '取消', style: 'cancel' as const },
-    ]);
-  }, [postMedia.length, pickImagesOnly, pickVideosOnly]);
+    setShowAddChoice(true);
+  }, [postMedia.length]);
 
   // 視頻縮略圖：延後到交互完成後生成，避免阻塞選擇器彈出
   useEffect(() => {
@@ -619,6 +651,7 @@ export default function CommunityScreen({
         postTags={postTags}
         postMedia={postMedia}
         isPosting={isPosting}
+        isOpeningPicker={isOpeningPicker}
         keyboardHeight={keyboardHeight}
         textPrimary={textPrimary}
         textSecondary={textSecondary}
@@ -628,9 +661,42 @@ export default function CommunityScreen({
         onMediaReorder={reorderPostMedia}
         onMediaRemove={removePostMedia}
         onMediaAdd={onAddMedia}
+        onAddImages={pickImagesOnly}
+        onAddVideos={pickVideosOnly}
         onSubmit={handlePost}
         onDismissKeyboard={() => Keyboard.dismiss()}
       />
+
+      {/* 添加媒体选择：用自定义浮层代替 Alert，避免原生弹窗带来的延迟 */}
+      <Modal visible={showAddChoice && showCreateModal} transparent animationType="fade">
+        <View style={styles.addChoiceOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowAddChoice(false)} />
+          <View style={[styles.addChoiceBox, dark && styles.addChoiceBoxDark]} pointerEvents="box-none">
+            <View style={styles.addChoiceRow}>
+              <Pressable
+                style={[styles.addChoiceIconBtn, dark && styles.addChoiceIconBtnDark, isOpeningPicker && { opacity: 0.5 }]}
+                onPress={() => pickImagesOnly()}
+                disabled={isOpeningPicker}
+              >
+                <ImageIcon size={24} color={textPrimary} />
+              </Pressable>
+              <Pressable
+                style={[styles.addChoiceIconBtn, dark && styles.addChoiceIconBtnDark, isOpeningPicker && { opacity: 0.5 }]}
+                onPress={() => pickVideosOnly()}
+                disabled={isOpeningPicker}
+              >
+                <Video size={24} color={textPrimary} />
+              </Pressable>
+            </View>
+            <Pressable
+              style={[styles.addChoiceIconBtn, styles.addChoiceCancel, dark && styles.addChoiceIconBtnDark]}
+              onPress={() => setShowAddChoice(false)}
+            >
+              <X size={22} color={textSecondary} />
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={viewingImages !== null && viewingImages.length > 0} transparent animationType="fade">
         <View style={styles.imageViewerOverlay}>
@@ -821,4 +887,36 @@ const styles = StyleSheet.create({
   },
   imageViewerThumbActive: { borderColor: '#fff' },
   imageViewerThumb: { width: '100%', height: '100%' },
+  addChoiceOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  addChoiceBox: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  addChoiceBoxDark: { backgroundColor: '#1e293b' },
+  addChoiceRow: { flexDirection: 'row', gap: 8 },
+  addChoiceIconBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addChoiceIconBtnDark: { backgroundColor: 'rgba(30,41,59,0.6)' },
+  addChoiceCancel: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: 'rgba(0,0,0,0.15)' },
 });

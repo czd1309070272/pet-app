@@ -12,7 +12,7 @@ import {
   Keyboard,
   ActivityIndicator,
 } from 'react-native';
-import { Send, X, Plus } from 'lucide-react-native';
+import { Send, X, Plus, Image as ImageIcon, Video } from 'lucide-react-native';
 import type { PostMediaItem } from './types';
 import { DraggableMediaGrid } from './DraggableMediaGrid';
 import { MODAL_TAGS } from './constants';
@@ -25,6 +25,7 @@ export interface CommunityCreateModalProps {
   postTags: string[];
   postMedia: PostMediaItem[];
   isPosting: boolean;
+  isOpeningPicker?: boolean;
   keyboardHeight: number;
   textPrimary: string;
   textSecondary: string;
@@ -34,6 +35,8 @@ export interface CommunityCreateModalProps {
   onMediaReorder: (from: number, to: number) => void;
   onMediaRemove: (uri: string) => void;
   onMediaAdd: () => void;
+  onAddImages?: () => void;
+  onAddVideos?: () => void;
   onSubmit: () => void;
   onDismissKeyboard: () => void;
 }
@@ -45,6 +48,7 @@ export function CommunityCreateModal({
   postTags,
   postMedia,
   isPosting,
+  isOpeningPicker = false,
   keyboardHeight,
   textPrimary,
   textSecondary,
@@ -54,6 +58,8 @@ export function CommunityCreateModal({
   onMediaReorder,
   onMediaRemove,
   onMediaAdd,
+  onAddImages,
+  onAddVideos,
   onSubmit,
   onDismissKeyboard,
 }: CommunityCreateModalProps) {
@@ -111,13 +117,48 @@ export function CommunityCreateModal({
                 onRemove={onMediaRemove}
                 onAdd={onMediaAdd}
                 dark={dark}
+                isAddDisabled={isOpeningPicker}
+                hideAddButton={Boolean(onAddImages && onAddVideos)}
               />
             )}
             <View style={styles.actions}>
-              {postMedia.length === 0 && (
-                <Pressable onPress={onMediaAdd} style={[styles.cameraBtn, dark && styles.cameraBtnDark]}>
-                  <Plus size={22} color={textSecondary} />
-                </Pressable>
+              {onAddImages && onAddVideos ? (
+                <View style={styles.addMediaRow}>
+                  <Pressable
+                    onPress={onAddImages}
+                    disabled={isOpeningPicker}
+                    style={[styles.addMediaBtn, dark && styles.addMediaBtnDark, isOpeningPicker && styles.cameraBtnDisabled]}
+                  >
+                    <ImageIcon size={22} color={textSecondary} />
+                  </Pressable>
+                  <Pressable
+                    onPress={onAddVideos}
+                    disabled={isOpeningPicker}
+                    style={[styles.addMediaBtn, dark && styles.addMediaBtnDark, isOpeningPicker && styles.cameraBtnDisabled]}
+                  >
+                    <Video size={22} color={textSecondary} />
+                  </Pressable>
+                  {isOpeningPicker && (
+                    <View style={[styles.openingPickerOverlay, dark && styles.openingPickerOverlayDark]}>
+                      <ActivityIndicator size="small" color={colors.orange[500]} />
+                      <Text style={[styles.openingPickerText, { color: textSecondary }]}>正在打开相册...</Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                postMedia.length === 0 && (
+                  <Pressable
+                    onPress={onMediaAdd}
+                    disabled={isOpeningPicker}
+                    style={[styles.cameraBtn, dark && styles.cameraBtnDark, isOpeningPicker && styles.cameraBtnDisabled]}
+                  >
+                    {isOpeningPicker ? (
+                      <ActivityIndicator size="small" color={textSecondary} />
+                    ) : (
+                      <Plus size={22} color={textSecondary} />
+                    )}
+                  </Pressable>
+                )
               )}
               <Pressable
                 onPress={onSubmit}
@@ -220,6 +261,33 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,0,0,0.06)',
   },
   cameraBtnDark: { backgroundColor: 'rgba(30,41,59,0.6)', borderColor: 'rgba(255,255,255,0.06)' },
+  cameraBtnDisabled: { opacity: 0.6 },
+  addMediaRow: { flexDirection: 'row', gap: 12, alignItems: 'center', position: 'relative' },
+  addMediaBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: borderRadius.lg,
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+  },
+  addMediaBtnDark: { backgroundColor: 'rgba(30,41,59,0.6)', borderColor: 'rgba(255,255,255,0.06)' },
+  openingPickerOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  openingPickerText: { fontSize: 12, fontWeight: '600' },
+  openingPickerOverlayDark: { backgroundColor: 'rgba(15,23,42,0.95)' },
   postBtn: {
     flex: 1,
     height: 52,

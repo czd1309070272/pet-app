@@ -9,7 +9,7 @@ import { COMMUNITY_LAYOUT, MEDIA_GRID, MAX_MEDIA } from './constants';
 import { colors, borderRadius, spacing } from '../../theme/tokens';
 
 const { IMG_GAP, LONG_PRESS_MS } = COMMUNITY_LAYOUT;
-const { modalCellSize, modalFullSize } = MEDIA_GRID;
+const { modalCellSize } = MEDIA_GRID;
 
 export interface DraggableMediaGridProps {
   items: PostMediaItem[];
@@ -17,6 +17,9 @@ export interface DraggableMediaGridProps {
   onRemove: (uri: string) => void;
   onAdd: () => void;
   dark: boolean;
+  isAddDisabled?: boolean;
+  /** 为 true 时不渲染网格内的 + 按钮（由外部提供图片/视频按钮） */
+  hideAddButton?: boolean;
 }
 
 export function DraggableMediaGrid({
@@ -25,6 +28,8 @@ export function DraggableMediaGrid({
   onRemove,
   onAdd,
   dark,
+  isAddDisabled = false,
+  hideAddButton = false,
 }: DraggableMediaGridProps) {
   const gridRef = useRef<View>(null);
   const [gridLayout, setGridLayout] = useState<{ x: number; y: number } | null>(null);
@@ -33,7 +38,7 @@ export function DraggableMediaGrid({
   const lastSwapIndex = useRef<number | null>(null);
   const dragSourceIndexRef = useRef<number | null>(null);
 
-  const cellSize = items.length === 1 ? modalFullSize : modalCellSize;
+  const cellSize = modalCellSize;
   const cols = 3;
 
   const getCellIndexFromPosition = useCallback(
@@ -121,8 +126,7 @@ export function DraggableMediaGrid({
     <View style={styles.wrap}>
       <View ref={gridRef} onLayout={handleGridLayout} style={[styles.grid, { gap: IMG_GAP }]}>
         {items.map((item, index) => {
-          const isSingle = items.length === 1;
-          const cellSz = isSingle ? modalFullSize : modalCellSize;
+          const cellSz = modalCellSize;
           const pan = createPanResponder(index);
           const isDragging = dragging?.index === index;
           return (
@@ -141,14 +145,14 @@ export function DraggableMediaGrid({
                       <>
                         <Image source={{ uri: item.thumbnailUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                         <View style={styles.videoPlayOverlay}>
-                          <View style={[styles.playIconWrap, isSingle && styles.playIconWrapLarge]}>
-                            <Play size={isSingle ? 32 : 18} color="#fff" fill="#fff" strokeWidth={0} />
+                          <View style={styles.playIconWrap}>
+                            <Play size={18} color="#fff" fill="#fff" strokeWidth={0} />
                           </View>
                         </View>
                       </>
                     ) : (
-                      <View style={[styles.playIconWrap, isSingle && styles.playIconWrapLarge]}>
-                        <Play size={isSingle ? 32 : 18} color="#fff" fill="#fff" strokeWidth={0} />
+                      <View style={styles.playIconWrap}>
+                        <Play size={18} color="#fff" fill="#fff" strokeWidth={0} />
                       </View>
                     )}
                   </View>
@@ -162,13 +166,15 @@ export function DraggableMediaGrid({
             </View>
           );
         })}
-        {items.length < MAX_MEDIA && (
+        {items.length < MAX_MEDIA && !hideAddButton && (
           <Pressable
             onPress={onAdd}
+            disabled={isAddDisabled}
             style={[
               styles.addCell,
               { width: modalCellSize, height: modalCellSize },
               dark && styles.addCellDark,
+              isAddDisabled && styles.addCellDisabled,
             ]}
           >
             <Plus size={26} color={colors.gray[500]} />
@@ -235,7 +241,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  playIconWrapLarge: { width: 56, height: 56, borderRadius: 28 },
   removeBtn: {
     position: 'absolute',
     top: 4,
@@ -256,6 +261,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addCellDark: { backgroundColor: 'rgba(30,41,59,0.6)', borderColor: 'rgba(255,255,255,0.06)' },
+  addCellDisabled: { opacity: 0.5 },
   draggingCell: { opacity: 0.5 },
   dragOverlay: {
     position: 'absolute',
