@@ -438,26 +438,26 @@ export default function PostDetailScreen({
               </View>
             )}
             {(() => {
-              const allMedia = [...(post.images || []), ...(post.videos || [])];
-              const mediaList = allMedia.map((url, i) => ({ url, key: `m-${i}-${url}` }));
-              const images = mediaList.filter((m) => !isVideoUrl(m.url));
-              const videos = mediaList.filter((m) => isVideoUrl(m.url));
-              if (images.length === 0 && videos.length === 0) return null;
+              const allMedia = post.orderedMedia ?? [...(post.images || []), ...(post.videos || [])];
+              if (allMedia.length === 0) return null;
               const size = SCREEN_WIDTH - spacing.lg * 2;
               return (
                 <View style={styles.detailImages}>
-                  {images.map(({ url, key }) => (
-                    <View key={key} style={[styles.detailImageWrap, { marginBottom: IMG_GAP }]}>
-                      <Image
-                        source={{ uri: imageUri(url) }}
-                        style={[styles.detailImage, { width: size, height: size }]}
-                        resizeMode="contain"
-                      />
-                    </View>
-                  ))}
-                  {videos.map(({ url, key }) => (
-                    <DetailVideoBlock key={key} videoUrl={url} />
-                  ))}
+                  {allMedia.map((url, i) => {
+                    const key = `m-${i}-${url}`;
+                    if (isVideoUrl(url)) {
+                      return <DetailVideoBlock key={key} videoUrl={url} />;
+                    }
+                    return (
+                      <View key={key} style={[styles.detailImageWrap, { marginBottom: IMG_GAP }]}>
+                        <Image
+                          source={{ uri: imageUri(url) }}
+                          style={[styles.detailImage, { width: size, height: size }]}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    );
+                  })}
                 </View>
               );
             })()}

@@ -323,14 +323,14 @@ export default function CommunityScreen({
       const tagRegex = /#[\w\u4e00-\u9fa5]+/g;
       const parsedTags = postContent.match(tagRegex) ?? [];
       const tags = [...new Set([...postTags, ...parsedTags])];
-      const images = postMedia.filter((m) => m.type === 'image').map((m) => m.uri);
-      const videos = postMedia.filter((m) => m.type === 'video').map((m) => m.uri);
+      // 按用户拖拽后的顺序发送，不要拆分 images/videos 导致视频被排到最后
+      const mediaUrls = postMedia.map((m) => m.uri);
       const token = await getToken();
       const newPost = await createPost({
         token: token ?? '',
         content: postContent,
-        images,
-        videos: videos.length ? videos : undefined,
+        images: mediaUrls,
+        videos: undefined,
         tags,
       });
       if (newPost) {
@@ -432,30 +432,38 @@ export default function CommunityScreen({
       return;
     }
     const limit = MAX_MEDIA - postMedia.length;
-    setIsOpeningPicker(true);
     setShowAddChoice(false);
-    InteractionManager.runAfterInteractions(async () => {
-      try {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') return;
-        const pickerPromise = ImagePicker.launchImageLibraryAsync({
-          mediaTypes: 'videos',
-          allowsMultipleSelection: true,
-          selectionLimit: limit,
-          ...(Platform.OS === 'ios' && {
-            presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
-          }),
-        });
-        const timeoutPromise = new Promise<ImagePicker.ImagePickerCanceledResult>((_, reject) =>
-          setTimeout(() => reject(new Error('PICKER_TIMEOUT')), 60000)
-        );
-        const result = await Promise.race([pickerPromise, timeoutPromise]);
-        if (!result.canceled && result.assets?.length) {
-          appendAssetsToPostMedia(result.assets, 'video');
+    requestAnimationFrame(() => {
+      setTimeout(async () => {
+        try {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') return;
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['videos'],
+            allowsMultipleSelection: Platform.OS !== 'ios',
+            selectionLimit: Platform.OS === 'ios' ? 1 : limit,
+            allowsEditing: Platform.OS === 'ios',
+            ...(Platform.OS === 'ios' && {
+              presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+            }),
+          });
+          if (!result.canceled && result.assets?.length) {
+            requestAnimationFrame(() => {
+              appendAssetsToPostMedia(result.assets, 'video');
+            });
+          }
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? '');
+          if (msg.includes('3164') || msg.includes('PHPhotosError')) {
+            Alert.alert(
+              '无法加载视频',
+              '该视频可能存储在 iCloud 且未下载到本机。请在「照片」App 中先打开该视频，等待其下载完成后再试。'
+            );
+          } else {
+            console.warn(e);
+          }
         }
-      } finally {
-        setIsOpeningPicker(false);
-      }
+      }, 200);
     });
   }, [postMedia.length, appendAssetsToPostMedia]);
 

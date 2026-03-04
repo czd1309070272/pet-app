@@ -252,8 +252,10 @@ export interface Post {
   content: string;
   fullContent?: string;
   images: string[];
-  /** 视频列表，与 images 互斥：有视频则无图片，有图片则无视频 */
+  /** 视频列表 */
   videos?: string[];
+  /** 媒体顺序（图片+视频混合时的展示顺序），有则优先用于渲染 */
+  orderedMedia?: string[];
   likes: number;
   comments: number;
   isLiked: boolean;

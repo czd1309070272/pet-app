@@ -78,17 +78,25 @@ export function CommunityPostCard({
               ))}
             </View>
           )}
-          {(post.images?.length || post.videos?.length) ? (
+          {(post.orderedMedia?.length || post.images?.length || post.videos?.length) ? (
             <CommunityMediaGrid
-              items={[
-                ...(post.images || []).map((uri) => ({
-                  uri,
-                  type: (isVideoUri(uri) ? 'video' : 'image') as 'image' | 'video',
-                })),
-                ...(post.videos || []).map((uri) => ({ uri, type: 'video' as const })),
-              ]}
+              items={
+                post.orderedMedia?.length
+                  ? post.orderedMedia.map((uri) => ({
+                      uri,
+                      type: (isVideoUri(uri) ? 'video' : 'image') as 'image' | 'video',
+                    }))
+                  : [
+                      ...(post.images || []).map((uri) => ({
+                        uri,
+                        type: (isVideoUri(uri) ? 'video' : 'image') as 'image' | 'video',
+                      })),
+                      ...(post.videos || []).map((uri) => ({ uri, type: 'video' as const })),
+                    ]
+              }
               onImagePress={(url) => {
-                const imgList = post.images || [];
+                const ordered = post.orderedMedia ?? [...(post.images || []), ...(post.videos || [])];
+                const imgList = ordered.filter((u) => !isVideoUri(u));
                 const idx = imgList.indexOf(url);
                 onImagePress(imgList, idx >= 0 ? idx : 0);
               }}

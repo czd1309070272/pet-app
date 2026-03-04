@@ -103,7 +103,7 @@ interface BackendComment {
   top_comment_id?: number | string;
 }
 
-/** 后端 newPost 格式（无 videos，后端仅 images） */
+/** 后端 newPost 格式（images 为有序媒体 URL 列表） */
 interface BackendPost {
   id: number;
   author: string;
@@ -122,7 +122,7 @@ interface BackendPost {
   commentList: BackendComment[];
 }
 
-/** 将后端 Post 转为前端 Post */
+/** 将后端 Post 转为前端 Post（保留 order 供混合图/视频时正确排序） */
 function mapBackendPostToPost(b: BackendPost): Post {
   const images = b.images ?? [];
   const videos: string[] = [];
@@ -143,6 +143,7 @@ function mapBackendPostToPost(b: BackendPost): Post {
     fullContent: b.fullContent ?? b.content ?? '',
     images: imgs,
     videos: videos.length ? videos : undefined,
+    orderedMedia: images.length ? images : undefined,
     likes: b.likes ?? 0,
     comments: b.comments ?? 0,
     isLiked: b.isLiked ?? false,
@@ -431,6 +432,9 @@ export async function createPost(params: CreatePostParams): Promise<Post | null>
   if (USE_MOCK) {
     await delay(500);
     const { content, images = [], videos = [], tags = [] } = params;
+    const mediaUrls = (images ?? []).length ? (images ?? []) : (videos ?? []).length ? [...(images ?? []), ...(videos ?? [])] : [];
+    const imgs = mediaUrls.filter((u) => !/\.(mp4|mov|webm|avi|mkv|m4v|3gp|ogg|wmv|flv)(\?|$)/i.test((u ?? '').split('?')[0]));
+    const vids = mediaUrls.filter((u) => /\.(mp4|mov|webm|avi|mkv|m4v|3gp|ogg|wmv|flv)(\?|$)/i.test((u ?? '').split('?')[0]));
     const post: Post = {
       id: mockPosts.length + 100 + Math.floor(Math.random() * 1000),
       author: MOCK_USER_NAME,
@@ -438,8 +442,9 @@ export async function createPost(params: CreatePostParams): Promise<Post | null>
       time: '剛剛',
       content: content.length > 80 ? content.slice(0, 80) + '...' : content,
       fullContent: content,
-      images: images ?? [],
-      videos: videos?.length ? videos : undefined,
+      images: imgs,
+      videos: vids.length ? vids : undefined,
+      orderedMedia: mediaUrls.length ? mediaUrls : undefined,
       likes: 0,
       comments: 0,
       isLiked: false,
