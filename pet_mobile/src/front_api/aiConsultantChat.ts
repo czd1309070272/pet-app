@@ -1,7 +1,9 @@
 /**
  * AI 顧問聊天 - 流式輸出接口
  * 對接後端 POST /api/chat/stream（後端使用 LangChain 實現流式輸出）
+ * 使用 expo/fetch 以支持 response.body ReadableStream 流式讀取（RN 原生 fetch 不支持）
  */
+import { fetch } from 'expo/fetch';
 import { API_BASE_URL } from './config';
 import { getData, USER_INFO_KEY } from './storage';
 import type { UserInfo } from '../types';
@@ -59,7 +61,8 @@ export async function* chatWithAIStream(
 
   const response = await fetch(`${API_BASE_URL}/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json','Accept': 'text/event-stream','Cache-Control': 'no-cache' },
     body: JSON.stringify(body),
   });
 
@@ -67,7 +70,7 @@ export async function* chatWithAIStream(
     throw new Error(`伺服器回應錯誤：${response.status} ${response.statusText}`);
   }
 
-  // React Native 的 fetch 可能不提供 response.body（ReadableStream），改為一次讀取全文
+  // 降級：若 response.body 不可用（如部分 Web 環境），改為一次讀取全文
   if (!response.body) {
     const fullText = await response.text();
     if (fullText) yield fullText;

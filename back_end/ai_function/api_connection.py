@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from .ocr import ocr
 from .llm import llm
-from .short_term_memory import need_context, get_last_n_rounds, format_rounds_as_document
+from .short_term_memory import get_last_n_rounds, format_rounds_as_document
 from fastapi import APIRouter, Form
 import io
 import time
@@ -126,17 +126,16 @@ async def chat_stream(req: ChatRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="消息不能为空")
 
-    # 短期记忆：规则初筛 → 仅在有需要时带最近 5 轮 + 上下文压缩
+    # 短期记忆：固定带最近 5 轮对话的压缩上下文（不再初筛）
     history_list = req.history or []
-    history_for_rules = [{"role": m.role, "text": m.text} for m in history_list]
-    use_context = need_context(req.message, history_for_rules)
     user_message = req.message
-    if use_context and history_list:
+    if history_list:
+        history_for_rules = [{"role": m.role, "text": m.text} for m in history_list]
         rounds = get_last_n_rounds(history_for_rules, n=5)
         if rounds:
             doc = format_rounds_as_document(rounds)
             compressed = await llm.compress_conversation_context(
-                doc, req.message, model_name="qwen3-max"
+                doc, req.message, model_name="qwen-flash"
             )
             if compressed:
                 user_message = f"【近期对话摘要】\n{compressed}\n\n【用户当前问题】\n{req.message}"
@@ -183,19 +182,22 @@ async def chat_stream(req: ChatRequest):
         # 使用 LangChain 實現的流式輸出（見 llm.stream_completion_langchain）
         async for chunk in llm.stream_completion_langchain(
             user_message=user_message,
-            model_name="qwen3-max",  # 可改为从配置或请求中动态指定
+            model_name="qwen-flash",  # 可改为从配置或请求中动态指定
             system_prompt=system_prompt,
             temperature=0.7,
         ):
             yield chunk
     # 流式輸出：禁止緩存與代理緩衝，確保打字機效果
+    # 注意：使用 application/octet-stream 可避免 iOS URLSession 緩衝首 ~512 字節
+    # 見 https://github.com/expo/expo/issues/32950
     return StreamingResponse(
         event_generator(),
-        media_type="text/plain; charset=utf-8",
+        media_type="application/octet-stream",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
+            "Content-Type": "application/octet-stream",
         },
     )
 

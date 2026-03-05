@@ -13,6 +13,7 @@ import DiaryScreen from '../screens/DiaryScreen';
 import AlbumScreen from '../screens/AlbumScreen';
 import ArticleListScreen from '../screens/ArticleListScreen';
 import ArticleDetailScreen from '../screens/ArticleDetailScreen';
+import ProductDetailScreen from '../screens/ProductDetailScreen';
 import PetProfileScreen from '../screens/PetProfileScreen';
 import PetBehaviorAnalysisScreen from '../screens/PetBehaviorAnalysisScreen';
 import PetBehaviorAnalysisResultScreen from '../screens/PetBehaviorAnalysisResultScreen';
@@ -43,6 +44,7 @@ export default function HomeStack() {
       <Stack.Screen name="Detect" component={DetectScreen} />
       <Stack.Screen name="HistoryReport" component={HistoryReportScreen} />
       <Stack.Screen name="AIConsultant" component={AIConsultantScreen} />
+      <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
       <Stack.Screen name="ArticleList" component={ArticleListScreen} />
       <Stack.Screen name="ArticleDetail" component={ArticleDetailScreen} />
       <Stack.Screen name="Album" component={AlbumScreen} />

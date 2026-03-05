@@ -28,6 +28,8 @@ export type HomeStackParamList = {
   Detect: { initialTab?: 'HEALTH' | 'SCANNER' | 'TRANSLATOR' } | undefined;
   HistoryReport: { type: 'HEALTH' | 'SCANNER' | 'TRANSLATOR' };
   AIConsultant: undefined;
+  /** 從 AI 顧問好物推薦進入時，返回會回到 AI 顧問而非探索 */
+  ProductDetail: { productId: string };
   ArticleList: undefined;
   ArticleDetail: { articleId: string };
   StarryMemorial: { pet: PetProfile };

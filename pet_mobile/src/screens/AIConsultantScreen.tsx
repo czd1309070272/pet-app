@@ -16,7 +16,6 @@ import {
   Send,
   Bot,
   User,
-  MessageSquareText,
   Loader2,
   History,
   ShoppingBag,
@@ -25,8 +24,12 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { HomeStackParamList } from '../navigation/types';
 import { ViewHeader } from '../components/shared/CommonUI';
 import { useApp } from '../context/AppContext';
-import { colors, borderRadius, spacing } from '../theme/tokens';
+import { colors, spacing } from '../theme/tokens';
 import { chatWithAIStream } from '../front_api/aiConsultantChat';
+import { MessageCardRenderer } from '../components/cards';
+import type { MessageCardData } from '../components/cards';
+import type { Product } from '../types';
+import * as mockApi from '../api/mock';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'AIConsultant'>;
 
@@ -36,9 +39,23 @@ interface Message {
   text: string;
   time: string;
   isStreaming?: boolean;
+  /** 可拼接的卡片，支援單張或多張自由組合 */
+  card?: MessageCardData;
+  cards?: MessageCardData[];
 }
 
 const SUGGESTIONS = ['推薦好用的貓砂？', '什麼時候該驅蟲？', '來個寵物冷知識 ✨', '如何挑選糧食？'];
+
+/** 全部卡片測試用數據 */
+const CARD_TEST_ITEMS: { label: string; getCard: () => MessageCardData | Promise<MessageCardData> }[] = [
+  { label: '好物推薦', getCard: async () => ({ type: 'product_recommendation', products: await mockApi.fetchProducts(undefined, 1, 3), maxItems: 3 }) },
+  { label: '用藥風險', getCard: () => ({ type: 'medication_feeding_risk', content: '請遵從獸醫指示用藥，切勿自行增減劑量。若寵物對藥物過敏，請立即停藥並就醫。' }) },
+  { label: '緊急警示', getCard: () => ({ type: 'emergency_alert', content: '若寵物出現呼吸困難、抽搐、大量出血等緊急情況，請立即前往獸醫急診！' }) },
+  { label: '品種風險', getCard: () => ({ type: 'breed_age_risk', content: '此品種易有髖關節問題，建議控制體重、避免過度跳躍。', petInfo: '柯基犬 · 幼犬' }) },
+  { label: 'AI 局限', getCard: () => ({ type: 'ai_limitation', content: '本建議由 AI 生成，僅供參考。AI 可能存在局限性，請結合獸醫專業判斷。' }) },
+  { label: '隱私數據', getCard: () => ({ type: 'privacy_data', content: '您的對話數據僅用於改善服務，我們不會外洩或用于營銷。詳見隱私政策。' }) },
+  { label: '免責聲明', getCard: () => ({ type: 'disclaimer', content: '本服務僅供參考，不構成獸醫或醫療建議。如寵物出現異常，請及時就醫。' }) },
+];
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -97,6 +114,9 @@ function SpinningLoader({ size = 16, color = '#a855f7' }: { size?: number; color
   );
 }
 
+/** 觸發好物推薦卡片的關鍵詞 */
+const PRODUCT_CARD_TRIGGERS = ['好物推薦', '推薦貓糧', '推薦糧食', '貓糧推薦', '狗糧推薦'];
+
 export default function AIConsultantScreen({ navigation }: { navigation: Nav }) {
   const { isDarkMode } = useApp();
   const dark = isDarkMode;
@@ -107,6 +127,16 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
       type: 'AI',
       text: '你好！我是你的 PawPal AI 顧問。無論是健康、飲食還是行為問題，我都在這裡為你解惑喔 ✨',
       time: '現在',
+      cards: [
+        {
+          type: 'ai_limitation',
+          content: '本建議由 AI 生成，僅供參考。AI 可能存在局限性，請結合獸醫專業判斷。',
+        },
+        {
+          type: 'disclaimer',
+          content: '本服務僅供參考，不構成獸醫或醫療建議。如寵物出現異常，請及時就醫。',
+        },
+      ],
     },
   ]);
   const [inputText, setInputText] = useState('');
@@ -129,9 +159,13 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }, [messages, isThinking]);
 
-  const handleSend = (text?: string) => {
+  const handleSend = (text?: string, attachProductCard?: boolean) => {
     const content = (text ?? inputText).trim();
     if (!content || isThinking) return;
+
+    Keyboard.dismiss();
+
+    const shouldAttachCard = attachProductCard ?? PRODUCT_CARD_TRIGGERS.some((k) => content.includes(k));
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -155,16 +189,14 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
       },
     ]);
 
-    // 構建歷史記錄（最近若干條，供後端上下文）
     const buildHistory = (list: Message[]) => {
-      const items = list
+      return list
         .filter((m) => m.type === 'USER' || m.type === 'AI')
         .slice(-10)
         .map((m) => ({
           role: (m.type === 'USER' ? 'user' : 'model') as 'user' | 'model',
           text: m.text,
         }));
-      return items;
     };
 
     (async () => {
@@ -180,9 +212,20 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
             )
           );
         }
+
+        let card: MessageCardData | undefined;
+        if (shouldAttachCard) {
+          const products = await mockApi.fetchProducts(undefined, 1, 3);
+          if (products.length > 0) {
+            card = { type: 'product_recommendation', products, maxItems: 3 };
+          }
+        }
+
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === aiMsgId ? { ...m, text: fullText || '（無回覆）', isStreaming: false } : m
+            m.id === aiMsgId
+              ? { ...m, text: fullText || '（無回覆）', isStreaming: false, card }
+              : m
           )
         );
       } catch (err) {
@@ -198,11 +241,30 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
     })();
   };
 
+  const handleProductPress = (product: Product) => {
+    navigation.navigate('ProductDetail', { productId: product.id });
+  };
+
+  const handleTestCard = async (item: (typeof CARD_TEST_ITEMS)[0]) => {
+    const card = await Promise.resolve(item.getCard());
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: Date.now().toString(),
+        type: 'AI',
+        text: `[卡片測試] ${item.label}`,
+        time: new Date().toLocaleTimeString('zh-Hant', { hour: '2-digit', minute: '2-digit' }),
+        card,
+      },
+    ]);
+  };
+
   const textColor = dark ? '#f8fafc' : colors.gray[800];
   const subColor = dark ? colors.gray[400] : colors.gray[500];
   const bubbleUser = '#6366f1';
-  const bubbleAiBg = dark ? 'rgba(30,41,59,0.85)' : 'rgba(255,255,255,0.9)';
-  const bubbleAiBorder = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const bubbleBlackBorder = dark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.25)';
+  const bubbleAiBg = dark ? 'rgba(30,41,59,0.85)' : '#fdf6ed';
+  const bubbleAiBorder = bubbleBlackBorder;
 
   return (
     <View style={[styles.container, { backgroundColor: dark ? colors.slate[950] : '#fafafa', paddingTop: insets.top }]}>
@@ -236,7 +298,7 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
           {messages.map((msg) => (
             <View
               key={msg.id}
-              style={[styles.msgRow, msg.type === 'USER' && styles.msgRowUser]}
+              style={[styles.msgRow, msg.type === 'USER' ? styles.msgRowUser : styles.msgRowAi]}
             >
               <View style={[styles.msgAvatar, msg.type === 'AI' ? styles.msgAvatarAi : styles.msgAvatarUser]}>
                 {msg.type === 'AI' ? <Bot size={20} color="#fff" /> : <User size={20} color="#a855f7" />}
@@ -247,7 +309,7 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
                     style={[
                       styles.msgBubble,
                       msg.type === 'USER'
-                        ? { backgroundColor: bubbleUser }
+                        ? { backgroundColor: bubbleUser, borderColor: bubbleBlackBorder }
                         : { backgroundColor: bubbleAiBg, borderColor: bubbleAiBorder },
                     ]}
                   >
@@ -258,12 +320,28 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
                     )}
                   </View>
                 )}
+                {!msg.isStreaming && msg.type === 'AI' && (() => {
+                  const cards = msg.cards ?? (msg.card ? [msg.card] : []);
+                  if (cards.length === 0) return null;
+                  return (
+                    <>
+                      {cards.map((c, i) => (
+                        <MessageCardRenderer
+                          key={i}
+                          card={c}
+                          dark={dark}
+                          onProductPress={handleProductPress}
+                        />
+                      ))}
+                    </>
+                  );
+                })()}
                 <Text style={[styles.msgTime, { color: subColor }]}>{msg.time}</Text>
               </View>
             </View>
           ))}
           {isThinking && !messages.some((m) => m.isStreaming) && (
-            <View style={styles.msgRow}>
+            <View style={[styles.msgRow, styles.msgRowAi]}>
               <View style={[styles.msgAvatar, styles.msgAvatarAi]}>
                 <Bot size={20} color="#fff" />
               </View>
@@ -289,7 +367,7 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
         >
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.suggestRow} contentContainerStyle={styles.suggestRowContent}>
             <Pressable
-              onPress={() => handleSend('推薦貓糧')}
+              onPress={() => handleSend('推薦貓糧', true)}
               style={[styles.suggestChip, { backgroundColor: 'rgba(249, 115, 22, 0.1)', borderColor: 'rgba(249, 115, 22, 0.2)' }]}
             >
               <ShoppingBag size={12} color={colors.orange[600]} />
@@ -302,6 +380,17 @@ export default function AIConsultantScreen({ navigation }: { navigation: Nav }) 
                 style={[styles.suggestChip, { backgroundColor: bubbleAiBg, borderColor: bubbleAiBorder }]}
               >
                 <Text style={[styles.suggestChipText, { color: textColor }]}>{s}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.cardTestRow} contentContainerStyle={styles.cardTestRowContent}>
+            {CARD_TEST_ITEMS.map((item, i) => (
+              <Pressable
+                key={i}
+                onPress={() => handleTestCard(item)}
+                style={[styles.cardTestChip, { backgroundColor: 'rgba(124, 58, 237, 0.15)', borderColor: 'rgba(124, 58, 237, 0.3)' }]}
+              >
+                <Text style={[styles.cardTestChipText, { color: '#7c3aed' }]}>{item.label}</Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -368,9 +457,11 @@ const styles = StyleSheet.create({
     paddingBottom: 200,
     paddingTop: spacing.lg,
     maxWidth: SCREEN_WIDTH,
+    flexGrow: 0,
   },
-  msgRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.xl, gap: 14 },
-  msgRowUser: { flexDirection: 'row-reverse' },
+  msgRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.xl, gap: 8 },
+  msgRowAi: { marginLeft: -spacing.md },
+  msgRowUser: { flexDirection: 'row-reverse', marginRight: -spacing.md },
   msgAvatar: {
     width: 40,
     height: 40,
@@ -386,7 +477,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderRadius: 20,
-    borderWidth: 1,
+    borderWidth: 2,
     maxWidth: '100%',
   },
   thinkingBubble: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -404,8 +495,18 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     borderTopWidth: 1,
   },
-  suggestRow: { marginBottom: spacing.md },
+  suggestRow: { marginBottom: spacing.sm },
   suggestRowContent: { paddingRight: spacing.lg },
+  cardTestRow: { marginBottom: spacing.md },
+  cardTestRowContent: { paddingRight: spacing.lg },
+  cardTestChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  cardTestChipText: { fontSize: 11, fontWeight: '700' },
   suggestChip: {
     flexDirection: 'row',
     alignItems: 'center',

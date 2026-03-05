@@ -36,89 +36,60 @@ class LanguageModel:
         except Exception as e:
             logger.error(f"❌ 加载密钥池失败: {e}")
             return []
-    def parse_llm_json(self,raw_response):
-        try:
-            # 1. 嘗試直接解析
-            return json.loads(raw_response)
-        except json.JSONDecodeError:
-            # 2. 如果失敗，嘗試提取 ```json { ... } ``` 內部的內容
-            match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except:
-                    pass
-            return None
-    def parse_pet_drug_json(self, raw_response: str) -> Optional[Dict]:
-        """
-        專門解析更新後的簡化 JSON 格式（ScannerResult 對應結構）
-        {
-        "riskIngredients": ["成分A", ...],
-        "safeIngredients": ["成分X", ...],
-        "resultUrl": "",
-        "summary": "總結文字"
-        }
-        """
-        if not raw_response or not isinstance(raw_response, str):
-            return None
+    # def parse_llm_json(self,raw_response):
+    #     try:
+    #         # 1. 嘗試直接解析
+    #         return json.loads(raw_response)
+    #     except json.JSONDecodeError:
+    #         # 2. 如果失敗，嘗試提取 ```json { ... } ``` 內部的內容
+    #         match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+    #         if match:
+    #             try:
+    #                 return json.loads(match.group())
+    #             except:
+    #                 pass
+    #         return None
 
-        # 步驟1: 去除常見的 markdown 代碼塊包裹（最常見的 LLM 輸出格式）
-        cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_response.strip(), flags=re.IGNORECASE | re.MULTILINE)
-        cleaned = re.sub(r'^```|\s*```$', '', cleaned.strip())
+    # def parse_pet_drug_json(self, raw_response: str) -> Optional[Dict]:
+    #     """
+    #     專門解析更新後的簡化 JSON 格式（ScannerResult 對應結構）
+    #     """
+    #     if not raw_response or not isinstance(raw_response, str):
+    #         return None
+    #     cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw_response.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    #     cleaned = re.sub(r'^```|\s*```$', '', cleaned.strip())
+    #     cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', lambda m: f'\\u{ord(m.group(0)):04x}', cleaned)
+    #     cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
+    #     try:
+    #         data = json.loads(cleaned)
+    #         required_keys = {"riskIngredients", "safeIngredients", "resultUrl", "summary"}
+    #         if required_keys.issubset(data.keys()):
+    #             if (isinstance(data["riskIngredients"], list) and
+    #                 isinstance(data["safeIngredients"], list) and
+    #                 isinstance(data["resultUrl"], str) and
+    #                 isinstance(data["summary"], str)):
+    #                 return data
+    #     except json.JSONDecodeError:
+    #         pass
+    #     match = re.search(r'\{[\s\S]*\}', cleaned, re.DOTALL)
+    #     if match:
+    #         try:
+    #             data = json.loads(match.group(0))
+    #             required_keys = {"riskIngredients", "safeIngredients", "resultUrl", "summary"}
+    #             if required_keys.issubset(data.keys()):
+    #                 return data
+    #         except json.JSONDecodeError:
+    #             pass
+    #     return None
 
-        # 步驟2: 強制處理控制字元（避免 Invalid control character 錯誤）
-        cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', lambda m: f'\\u{ord(m.group(0)):04x}', cleaned)
+    # def parse_pet_translate_json(self,raw_str):
+    #     fixed_str = re.sub(r'(?<=[:"\[,])\s*\n\s*(?=[^\]}])', r'\\n', raw_str)
+    #     try:
+    #         return json.loads(fixed_str, strict=False)
+    #     except json.JSONDecodeError:
+    #         sanitized = raw_str.replace('\n', ' ').replace('\r', ' ')
+    #         return json.loads(sanitized, strict=False)
 
-        # 步驟3: 移除常見的尾隨逗號（LLM 常犯錯誤）
-        cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
-
-        # 步驟4: 嘗試直接解析
-        try:
-            data = json.loads(cleaned)
-            required_keys = {"riskIngredients", "safeIngredients", "resultUrl", "summary"}
-            if required_keys.issubset(data.keys()):
-                # 可選：簡單類型驗證
-                if (isinstance(data["riskIngredients"], list) and
-                    isinstance(data["safeIngredients"], list) and
-                    isinstance(data["resultUrl"], str) and
-                    isinstance(data["summary"], str)):
-                    return data
-        except json.JSONDecodeError as e:
-            print(f"直接解析失敗: {e}")
-            print(f"位置: line {e.lineno} col {e.colno} (char {e.pos})")
-
-        # 步驟5: 更寬鬆提取（找第一個完整 { ... }）
-        match = re.search(r'\{[\s\S]*\}', cleaned, re.DOTALL)
-        if match:
-            json_part = match.group(0)
-            try:
-                data = json.loads(json_part)
-                required_keys = {"riskIngredients", "safeIngredients", "resultUrl", "summary"}
-                if required_keys.issubset(data.keys()):
-                    if (isinstance(data["riskIngredients"], list) and
-                        isinstance(data["safeIngredients"], list) and
-                        isinstance(data["resultUrl"], str) and
-                        isinstance(data["summary"], str)):
-                        return data
-            except json.JSONDecodeError as e:
-                print(f"提取後仍失敗: {e}")
-                print(f"提取片段前200字: {json_part[:200]}...")
-
-        # 步驟6: 最終失敗，返回 None
-        return None
-    def parse_pet_translate_json(self,raw_str):
-        # 1. 處理潛在的真實換行符，將其替換為字面上的 \n
-        # 這個正則表達式會尋找在引號內的真實換行並修復它
-        fixed_str = re.sub(r'(?<=[:"\[,])\s*\n\s*(?=[^\]}])', r'\\n', raw_str)
-        
-        try:
-            # 2. 使用 strict=False 允許控制字元
-            return json.loads(fixed_str, strict=False)
-        except json.JSONDecodeError:
-            # 3. 如果還是失敗，最後一招：手動清理掉所有換行符，只保留空格
-            # 雖然格式會稍微跑掉，但至少能讀到資料
-            sanitized = raw_str.replace('\n', ' ').replace('\r', ' ')
-            return json.loads(sanitized, strict=False)
     async def stream_completion(
             self,
             user_message: str,
