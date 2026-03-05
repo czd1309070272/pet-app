@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated, Pressable, Modal } from 'react-native';
+import { View, Text, StyleSheet, Animated, Pressable, Modal, InteractionManager } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator, BottomTabBar } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -154,10 +154,13 @@ export default function MainTabs() {
       <Tab.Screen
         name="DiscoveryTab"
         component={DiscoveryStack}
-        listeners={({ navigation }) => ({
+        listeners={() => ({
           tabPress: (e) => {
-            // 點擊「探索」時進入短視頻流（VideoFeed）；商城由短視頻頁頂部「商城」入口進入
-            navigation.navigate('DiscoveryTab', { screen: 'VideoFeed' });
+            e.preventDefault();
+            // 延遲到當前交互完成後導航，避免與社群頁的滾動/焦點邏輯競態導致卡死
+            InteractionManager.runAfterInteractions(() => {
+              rootNav.navigate('Main', { screen: 'DiscoveryTab', params: { screen: 'VideoFeed' } });
+            });
           },
         })}
         options={{
