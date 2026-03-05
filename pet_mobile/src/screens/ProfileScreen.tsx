@@ -12,6 +12,7 @@ import {
   Vibration,
   Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ChevronRight,
@@ -47,6 +48,7 @@ import {
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ProfileStackParamList } from '../navigation/types';
 import type { PetProfile, AlbumPhoto, UserInfo, Appointment } from '../types';
+import { CAT_BREEDS, DOG_BREEDS, SPECIES_OPTIONS, GENDER_OPTIONS, NEUTERED_OPTIONS } from '../constants/petBreeds';
 import { colors, borderRadius, spacing, shadowGlass } from '../theme/tokens';
 import { ensureImageUri } from '../utils/imageUri';
 import { useTabBarVisibility } from '../context/TabBarVisibilityContext';
@@ -93,12 +95,16 @@ export default function ProfileScreen({
   const [isMovingToMemorial, setIsMovingToMemorial] = useState(false);
   const [newPet, setNewPet] = useState({
     name: '',
+    species: '貓' as '貓' | '狗',
     breed: '',
-    gender: '小公主 (已絕育)',
+    gender: '小公主' as '小公主' | '小王子',
+    neutered: '已絕育' as '已絕育' | '未絕育',
     birthday: new Date().toISOString().split('T')[0],
     hobbies: '',
     isMemorial: false,
   });
+  const [showBreedPicker, setShowBreedPicker] = useState(false);
+  const [showBirthdayPicker, setShowBirthdayPicker] = useState(false);
   const [tempAvatar, setTempAvatar] = useState('https://picsum.photos/seed/pet_placeholder/200');
 
   const loadData = useCallback(async () => {
@@ -140,16 +146,26 @@ export default function ProfileScreen({
     if (!newPet.name || !newPet.breed) return;
     setIsAdding(true);
     try {
+      const genderStr = `${newPet.gender} (${newPet.neutered})`;
       const added = await frontApi.addPet({
-        ...newPet,
+        name: newPet.name,
+        breed: newPet.breed,
+        gender: genderStr,
+        birthday: newPet.birthday,
+        hobbies: newPet.hobbies,
+        isMemorial: newPet.isMemorial,
         avatar: tempAvatar,
       });
       setPets((prev) => [...prev, added]);
       setShowAddModal(false);
+      setShowBreedPicker(false);
+      setShowBirthdayPicker(false);
       setNewPet({
         name: '',
+        species: '貓',
         breed: '',
-        gender: '小公主 (已絕育)',
+        gender: '小公主',
+        neutered: '已絕育',
         birthday: new Date().toISOString().split('T')[0],
         hobbies: '',
         isMemorial: false,
@@ -160,6 +176,8 @@ export default function ProfileScreen({
       setIsAdding(false);
     }
   };
+
+  const breedList = newPet.species === '貓' ? CAT_BREEDS : DOG_BREEDS;
 
   const handleMovePet = (idx: number, direction: 'up' | 'down') => {
     const newIdx = direction === 'up' ? idx - 1 : idx + 1;
@@ -588,11 +606,27 @@ export default function ProfileScreen({
 
       {/* Add Pet Modal */}
       <Modal visible={showAddModal} transparent animationType="slide">
-        <Pressable style={styles.modalBackdrop} onPress={() => !isAdding && setShowAddModal(false)} />
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => {
+            if (!isAdding) {
+              setShowAddModal(false);
+              setShowBreedPicker(false);
+              setShowBirthdayPicker(false);
+            }
+          }}
+        />
         <View style={[styles.addModalContent, { backgroundColor: dark ? colors.slate[900] : '#fff' }]}>
           <View style={styles.addModalHeader}>
             <Text style={[styles.addModalTitle, { color: textPrimary }]}>添加新成員</Text>
-            <Pressable onPress={() => setShowAddModal(false)} style={[styles.addModalClose, { backgroundColor: dark ? colors.slate[800] : '#f3f4f6' }]}>
+            <Pressable
+              onPress={() => {
+                setShowAddModal(false);
+                setShowBreedPicker(false);
+                setShowBirthdayPicker(false);
+              }}
+              style={[styles.addModalClose, { backgroundColor: dark ? colors.slate[800] : '#f3f4f6' }]}
+            >
               <X size={18} color={textSecondary} />
             </Pressable>
           </View>
@@ -602,7 +636,7 @@ export default function ProfileScreen({
               <Camera size={14} color="#fff" />
             </Pressable>
           </View>
-          <View style={styles.addModalForm}>
+          <ScrollView style={styles.addModalFormScroll} showsVerticalScrollIndicator={false}>
             <Text style={[styles.addModalLabel, { color: textSecondary }]}>成員姓名</Text>
             <TextInput
               value={newPet.name}
@@ -611,33 +645,140 @@ export default function ProfileScreen({
               placeholderTextColor={textSecondary}
               style={[styles.addModalInput, { color: textPrimary, backgroundColor: dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] }]}
             />
-            <Text style={[styles.addModalLabel, { color: textSecondary }]}>品種</Text>
-            <TextInput
-              value={newPet.breed}
-              onChangeText={(t) => setNewPet((p) => ({ ...p, breed: t }))}
-              placeholder="如：布偶貓"
-              placeholderTextColor={textSecondary}
-              style={[styles.addModalInput, { color: textPrimary, backgroundColor: dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] }]}
-            />
-            <View style={styles.addModalRow}>
-              <View style={styles.addModalField}>
-                <Text style={[styles.addModalLabel, { color: textSecondary }]}>性別</Text>
-                <TextInput
-                  value={newPet.gender}
-                  onChangeText={(t) => setNewPet((p) => ({ ...p, gender: t }))}
-                  style={[styles.addModalInput, styles.addModalInputSmall, { color: textPrimary, backgroundColor: dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] }]}
-                />
-              </View>
-              <View style={styles.addModalField}>
-                <Text style={[styles.addModalLabel, { color: textSecondary }]}>生日</Text>
-                <TextInput
-                  value={newPet.birthday}
-                  onChangeText={(t) => setNewPet((p) => ({ ...p, birthday: t }))}
-                  style={[styles.addModalInput, styles.addModalInputSmall, { color: textPrimary, backgroundColor: dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] }]}
-                />
-              </View>
+            <Text style={[styles.addModalLabel, { color: textSecondary }]}>貓還是狗</Text>
+            <View style={styles.addModalChipRow}>
+              {SPECIES_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt}
+                  onPress={() => setNewPet((p) => ({ ...p, species: opt, breed: '' }))}
+                  style={[
+                    styles.addModalChip,
+                    { backgroundColor: newPet.species === opt ? colors.orange[500] : dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] },
+                  ]}
+                >
+                  <Text style={[styles.addModalChipText, { color: newPet.species === opt ? '#fff' : textPrimary }]}>{opt}</Text>
+                </Pressable>
+              ))}
             </View>
-          </View>
+            <Text style={[styles.addModalLabel, { color: textSecondary }]}>品種</Text>
+            <Pressable
+              onPress={() => setShowBreedPicker(true)}
+              style={[styles.addModalInput, styles.addModalPicker, { color: textPrimary, backgroundColor: dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] }]}
+            >
+              <Text style={{ color: newPet.breed ? textPrimary : textSecondary }}>{newPet.breed || `請選擇${newPet.species === '貓' ? '貓' : '狗'}品種`}</Text>
+              <ChevronRight size={16} color={textSecondary} />
+            </Pressable>
+            <Text style={[styles.addModalLabel, { color: textSecondary }]}>性別</Text>
+            <View style={styles.addModalChipRow}>
+              {GENDER_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt}
+                  onPress={() => setNewPet((p) => ({ ...p, gender: opt }))}
+                  style={[
+                    styles.addModalChip,
+                    { backgroundColor: newPet.gender === opt ? colors.orange[500] : dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] },
+                  ]}
+                >
+                  <Text style={[styles.addModalChipText, { color: newPet.gender === opt ? '#fff' : textPrimary }]}>{opt}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={[styles.addModalLabel, { color: textSecondary }]}>絕育狀態</Text>
+            <View style={styles.addModalChipRow}>
+              {NEUTERED_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt}
+                  onPress={() => setNewPet((p) => ({ ...p, neutered: opt }))}
+                  style={[
+                    styles.addModalChip,
+                    { backgroundColor: newPet.neutered === opt ? colors.orange[500] : dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] },
+                  ]}
+                >
+                  <Text style={[styles.addModalChipText, { color: newPet.neutered === opt ? '#fff' : textPrimary }]}>{opt}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={[styles.addModalLabel, { color: textSecondary }]}>生日</Text>
+            <Pressable
+              onPress={() => setShowBirthdayPicker(true)}
+              style={[styles.addModalInput, styles.addModalPicker, { backgroundColor: dark ? 'rgba(30,41,59,0.6)' : colors.gray[50] }]}
+            >
+              <Text style={{ color: textPrimary }}>{newPet.birthday}</Text>
+              <ChevronRight size={16} color={textSecondary} />
+            </Pressable>
+
+            {/* 生日日曆選擇 */}
+            {showBirthdayPicker && (
+              <Modal visible transparent animationType="slide">
+                <Pressable style={styles.modalBackdrop} onPress={() => setShowBirthdayPicker(false)} />
+                <View style={[styles.breedPickerContent, { backgroundColor: dark ? colors.slate[900] : '#fff', maxHeight: 360 }]}>
+                  <View style={styles.breedPickerHeader}>
+                    <Text style={[styles.breedPickerTitle, { color: textPrimary }]}>選擇生日</Text>
+                    <Pressable onPress={() => setShowBirthdayPicker(false)} style={[styles.addModalClose, { backgroundColor: dark ? colors.slate[800] : '#f3f4f6' }]}>
+                      <X size={18} color={textSecondary} />
+                    </Pressable>
+                  </View>
+                  <DateTimePicker
+                    value={(() => {
+                      const parts = newPet.birthday.split('-').map(Number);
+                      const y = parts[0] || new Date().getFullYear();
+                      const m = (parts[1] || 1) - 1;
+                      const d = parts[2] || 1;
+                      return new Date(y, m, d);
+                    })()}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={(event, date) => {
+                      if (Platform.OS === 'android' && event.type === 'dismissed') {
+                        setShowBirthdayPicker(false);
+                        return;
+                      }
+                      if (date) {
+                        const str = date.toISOString().split('T')[0];
+                        setNewPet((p) => ({ ...p, birthday: str }));
+                        if (Platform.OS === 'android') setShowBirthdayPicker(false);
+                      }
+                    }}
+                    maximumDate={new Date()}
+                    style={{ backgroundColor: 'transparent' }}
+                  />
+                  {Platform.OS === 'ios' && (
+                    <Pressable onPress={() => setShowBirthdayPicker(false)} style={[styles.addModalSubmit, { marginTop: 12 }]}>
+                      <Text style={styles.addModalSubmitText}>確認</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </Modal>
+            )}
+          </ScrollView>
+
+          {/* 品種選擇彈窗 */}
+          <Modal visible={showBreedPicker} transparent animationType="slide">
+            <Pressable style={styles.modalBackdrop} onPress={() => setShowBreedPicker(false)} />
+            <View style={[styles.breedPickerContent, { backgroundColor: dark ? colors.slate[900] : '#fff' }]}>
+              <View style={styles.breedPickerHeader}>
+                <Text style={[styles.breedPickerTitle, { color: textPrimary }]}>選擇品種</Text>
+                <Pressable onPress={() => setShowBreedPicker(false)} style={[styles.addModalClose, { backgroundColor: dark ? colors.slate[800] : '#f3f4f6' }]}>
+                  <X size={18} color={textSecondary} />
+                </Pressable>
+              </View>
+              <ScrollView style={styles.breedPickerList} showsVerticalScrollIndicator={true}>
+                {breedList.map((b) => (
+                  <Pressable
+                    key={b}
+                    onPress={() => {
+                      setNewPet((p) => ({ ...p, breed: b }));
+                      setShowBreedPicker(false);
+                    }}
+                    style={[styles.breedPickerItem, { backgroundColor: newPet.breed === b ? (dark ? 'rgba(249,115,22,0.3)' : '#ffedd5') : 'transparent' }]}
+                  >
+                    <Text style={[styles.breedPickerItemText, { color: textPrimary }]}>{b}</Text>
+                    {newPet.breed === b && <ChevronRight size={16} color={colors.orange[500]} />}
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          </Modal>
           <Pressable
             onPress={handleAddPet}
             disabled={isAdding || !newPet.name || !newPet.breed}
@@ -796,11 +937,22 @@ const styles = StyleSheet.create({
   addModalAvatar: { width: 80, height: 80, borderRadius: 28, borderWidth: 2, borderColor: '#fff' },
   addModalAvatarBtn: { position: 'absolute', bottom: -4, right: -4, width: 28, height: 28, backgroundColor: colors.orange[500], borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   addModalForm: { marginBottom: 24 },
+  addModalFormScroll: { flexGrow: 0, maxHeight: 320, marginBottom: 24 },
   addModalLabel: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase', marginBottom: 4, marginTop: 12 },
   addModalInput: { borderRadius: 20, paddingHorizontal: 20, paddingVertical: 12, fontSize: 14, fontWeight: '700' },
   addModalInputSmall: { flex: 1 },
+  addModalChipRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  addModalChip: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 },
+  addModalChipText: { fontSize: 14, fontWeight: '700' },
+  addModalPicker: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   addModalRow: { flexDirection: 'row', gap: 12 },
   addModalField: { flex: 1 },
+  breedPickerContent: { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '70%' },
+  breedPickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  breedPickerTitle: { fontSize: 18, fontWeight: '800' },
+  breedPickerList: { maxHeight: 400 },
+  breedPickerItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12 },
+  breedPickerItemText: { fontSize: 15, fontWeight: '600' },
   addModalSubmit: { backgroundColor: colors.orange[500], height: 56, borderRadius: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12 },
   addModalSubmitDisabled: { opacity: 0.5 },
   addModalSubmitText: { fontSize: 14, fontWeight: '800', color: '#fff' },

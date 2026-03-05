@@ -184,6 +184,11 @@ export default function HomeScreen({ navigation }: { navigation: Nav }) {
 
   const textColor = dark ? '#f8fafc' : colors.gray[800];
   const subColor = dark ? colors.gray[400] : colors.gray[500];
+  const petIconSource = useMemo(() => {
+    const b = (activePet?.breed ?? '').toLowerCase();
+    const isCat = /貓|猫|cat/.test(b);
+    return isCat ? require('../../assets/icon/cat.png') : require('../../assets/icon/dog.png');
+  }, [activePet?.breed]);
   const glassBg = dark ? 'rgba(30, 41, 59, 0.85)' : 'rgba(255, 255, 255, 0.7)';
   const glassBorder = dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.6)';
 
@@ -212,18 +217,25 @@ export default function HomeScreen({ navigation }: { navigation: Nav }) {
             <View style={styles.petCardDecor}>
               <Activity size={120} color="rgba(255,255,255,0.12)" />
             </View>
-            {activePet.isMemorial && (
-              <View style={styles.badge}>
-                <Stars size={12} color="#fbbf24" fill="#fbbf24" />
-                <Text style={styles.badgeText}>Eternal Star</Text>
-              </View>
-            )}
-            {!activePet.isMemorial && user?.isVIP && (
-              <View style={styles.vipBadge}>
-                <Crown size={12} color="#fef3c7" fill="#fef3c7" />
-                <Text style={styles.vipBadgeText}>{user.vipLevel} OWNER</Text>
-              </View>
-            )}
+            <View style={styles.petCardTopRight}>
+              {activePet.isMemorial && (
+                <View style={styles.badge}>
+                  <Stars size={12} color="#fbbf24" fill="#fbbf24" />
+                  <Text style={styles.badgeText}>Eternal Star</Text>
+                </View>
+              )}
+              {!activePet.isMemorial && user?.isVIP && (
+                <View style={styles.vipBadge}>
+                  <Crown size={12} color="#fef3c7" fill="#fef3c7" />
+                  <Text style={styles.vipBadgeText}>{user.vipLevel} OWNER</Text>
+                </View>
+              )}
+              <Image
+                source={petIconSource}
+                style={styles.petCardIcon}
+                resizeMode="contain"
+              />
+            </View>
             <View style={styles.petRow}>
               <View>
                 <Image
@@ -266,6 +278,11 @@ export default function HomeScreen({ navigation }: { navigation: Nav }) {
             <View style={styles.petCardDecor}>
               <Activity size={100} color="rgba(255,255,255,0.08)" />
             </View>
+            <Image
+              source={require('../../assets/icon/card_icon.png')}
+              style={styles.petCardIconEmpty}
+              resizeMode="contain"
+            />
             <View style={styles.petEmptyContent}>
               <Heart size={40} color={dark ? 'rgba(255,255,255,0.4)' : 'rgba(251, 146, 60, 0.6)'} style={{ marginBottom: 12 }} />
               <Text style={[styles.petEmptyTitle, { color: dark ? '#e2e8f0' : colors.gray[800] }]}>還沒有添加寵物</Text>
@@ -496,7 +513,11 @@ export default function HomeScreen({ navigation }: { navigation: Nav }) {
           <View style={styles.diaryCardInner}>
             <View style={styles.diaryHead}>
               <View style={styles.diaryTitleRow}>
-                <Heart size={18} color="#f43f5e" fill="#f43f5e" style={styles.diaryIcon} />
+                <Image
+                  source={require('../../assets/icon/paw_button.png')}
+                  style={styles.diaryIcon}
+                  resizeMode="contain"
+                />
                 <Text style={[styles.diaryTitle, { color: textColor }]}>AI 萌寵日記</Text>
               </View>
               <View style={styles.diaryTag}>
@@ -540,9 +561,6 @@ const styles = StyleSheet.create({
   },
   petCardDecor: { position: 'absolute', top: -20, right: -20 },
   badge: {
-    position: 'absolute',
-    top: spacing.md,
-    right: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
@@ -555,9 +573,6 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontSize: 10, fontWeight: '800', color: '#fde68a' },
   vipBadge: {
-    position: 'absolute',
-    top: spacing.md,
-    right: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.22)',
@@ -586,6 +601,16 @@ const styles = StyleSheet.create({
   petFooterValueRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   petFooterValue: { fontSize: 16, fontWeight: '800', color: '#fff' },
   petFooterSparkles: { marginLeft: 4 },
+  petCardTopRight: {
+    position: 'absolute',
+    top: spacing.md,
+    right: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  petCardIcon: { width: 50, height: 50 },
+  petCardIconEmpty: { position: 'absolute', top: spacing.md, right: spacing.md, width: 40, height: 40, opacity: 0.6 },
   chevronWrap: { backgroundColor: 'rgba(255,255,255,0.22)', padding: 10, borderRadius: borderRadius['2xl'] },
   petCardEmpty: { minHeight: 140, justifyContent: 'center', alignItems: 'center' },
   petEmptyContent: { alignItems: 'center', paddingVertical: spacing.lg, paddingHorizontal: spacing.xl },
@@ -765,7 +790,7 @@ const styles = StyleSheet.create({
   },
   diaryHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
   diaryTitleRow: { flexDirection: 'row', alignItems: 'center' },
-  diaryIcon: { marginRight: 10 },
+  diaryIcon: { width: 18, height: 18, marginRight: 10 },
   diaryTitle: { fontSize: 16, fontWeight: '800' },
   diaryTag: { backgroundColor: colors.orange[100], paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999 },
   diaryTagText: { fontSize: 9, fontWeight: '800', color: colors.orange[600], letterSpacing: 1 },

@@ -34,7 +34,8 @@
           "photosPermission": "需要訪問您的相冊以選擇圖片進行分析"
         }
       ],
-      "expo-video"
+      "expo-video",
+      "@react-native-community/datetimepicker"
     ]
   }
 }

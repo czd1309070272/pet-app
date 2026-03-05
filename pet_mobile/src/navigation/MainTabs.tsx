@@ -1,10 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated, Pressable, Modal, InteractionManager } from 'react-native';
+import { View, Text, Image, StyleSheet, Animated, Pressable, Modal, InteractionManager } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator, BottomTabBar } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { BlurView } from 'expo-blur';
-import { Home, Compass, PlusCircle, MessageSquare, User, FileEdit, MessageCircle, Activity } from 'lucide-react-native';
+import { PlusCircle, FileEdit, MessageCircle, Activity } from 'lucide-react-native';
+
+const TAB_ICONS = {
+  home: require('../../assets/icon/home.png'),
+  explore: require('../../assets/icon/explore.png'),
+  community: require('../../assets/icon/community.png'),
+  profile: require('../../assets/icon/profile.png'),
+} as const;
 import type { MainTabParamList } from './types';
 import HomeStack from './HomeStack';
 import DiscoveryStack from './DiscoveryStack';
@@ -73,7 +80,7 @@ export default function MainTabs() {
   const tabBarHeight = tabBarContentHeight + tabBarBottomPadding;
 
   const activeColor = '#f97316';
-  const inactiveColor = dark ? '#6b7280' : '#9ca3af';
+  const inactiveColor = dark ? '#6b7280' : '#E5E5E5';
 
   const tabBarBackground = () => (
     <View style={[StyleSheet.absoluteFill, styles.glassOuter]}>
@@ -127,7 +134,7 @@ export default function MainTabs() {
         tabBarShowLabel: true,
         tabBarActiveTintColor: activeColor,
         tabBarInactiveTintColor: inactiveColor,
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '800' },
+        tabBarLabelStyle: { fontSize: 13, fontWeight: '800' },
         tabBarItemStyle: { paddingVertical: 2 },
         tabBarButton: (props) => {
           const { onPress, ref: _ref, ...rest } = props;
@@ -148,7 +155,9 @@ export default function MainTabs() {
         component={HomeStack}
         options={{
           title: '首頁',
-          tabBarIcon: ({ color, focused }) => <Home size={26} color={color} strokeWidth={focused ? 2.5 : 2} />,
+          tabBarIcon: ({ focused }) => (
+            <Image source={TAB_ICONS.home} style={[styles.tabIcon, { opacity: focused ? 1 : 0.6 }]} />
+          ),
         }}
       />
       <Tab.Screen
@@ -165,7 +174,9 @@ export default function MainTabs() {
         })}
         options={{
           title: '探索',
-          tabBarIcon: ({ color, focused }) => <Compass size={26} color={color} strokeWidth={focused ? 2.5 : 2} />,
+          tabBarIcon: ({ focused }) => (
+            <Image source={TAB_ICONS.explore} style={[styles.tabIcon, { opacity: focused ? 1 : 0.6 }]} />
+          ),
         }}
       />
       <Tab.Screen
@@ -191,7 +202,9 @@ export default function MainTabs() {
         component={CommunityStack}
         options={{
           title: '社群',
-          tabBarIcon: ({ color, focused }) => <MessageSquare size={26} color={color} strokeWidth={focused ? 2.5 : 2} />,
+          tabBarIcon: ({ focused }) => (
+            <Image source={TAB_ICONS.community} style={[styles.tabIcon, { opacity: focused ? 1 : 0.6 }]} />
+          ),
         }}
       />
       <Tab.Screen
@@ -199,7 +212,9 @@ export default function MainTabs() {
         component={ProfileStack}
         options={{
           title: '我的',
-          tabBarIcon: ({ color, focused }) => <User size={26} color={color} strokeWidth={focused ? 2.5 : 2} />,
+          tabBarIcon: ({ focused }) => (
+            <Image source={TAB_ICONS.profile} style={[styles.tabIcon, { opacity: focused ? 1 : 0.6 }]} />
+          ),
         }}
       />
     </Tab.Navigator>
@@ -252,6 +267,10 @@ export default function MainTabs() {
 }
 
 const styles = StyleSheet.create({
+  tabIcon: {
+    width: 30,
+    height: 30,
+  },
   glassOuter: {
     borderRadius: 999,
     overflow: 'hidden',
