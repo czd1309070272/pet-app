@@ -6,7 +6,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+ONLINE_DB = False
 class DatabaseManager:
     _instance = None
     
@@ -19,9 +19,15 @@ class DatabaseManager:
     def __init__(self):
         if self._initialized:
             return
-             
-        self.host = '127.0.0.1'
-        self.user = 'root'
+        if ONLINE_DB:
+            self.host = '45.207.201.158'
+            self.user = 'nb_user'
+            print("[+] 正式环境")
+        else:
+            self.host = '127.0.0.1'
+            self.user = 'root'
+            print("[+] 测试环境")
+        
         self.password = 'czd888'
         self.database = 'pawpal'
         self.pool = None

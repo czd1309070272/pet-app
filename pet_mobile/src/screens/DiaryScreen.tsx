@@ -1,40 +1,41 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
-  Text,
   ScrollView,
   Pressable,
-  TextInput,
   StyleSheet,
-  Image,
-  Modal,
-  Dimensions,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Alert,
-  FlatList,
+  Animated,
+  PanResponder,
+  InteractionManager,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Heart, Send, Image as ImageIcon, Wand2, RefreshCw, Trash2, X, Calendar, Plus, Video } from 'lucide-react-native';
+import { Calendar, Plus } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { HomeStackParamList } from '../navigation/types';
 import type { DiaryEntry } from '../types';
 import * as mockApi from '../api/mock';
 import { ViewHeader } from '../components/shared/CommonUI';
 import { useApp } from '../context/AppContext';
-import { colors, borderRadius, spacing, shadowGlass } from '../theme/tokens';
-import { pickFromCamera, pickMultipleFromAlbum, pickVideoFromCamera, pickVideoFromAlbum } from '../utils/imagePicker';
+import { colors, spacing } from '../theme/tokens';
+import { COMMUNITY_LAYOUT } from '../components/community/constants';
+import { FullscreenVideoModal, type PostMediaItem } from '../components/community';
+import {
+  DiaryEmptyState,
+  DiaryFilterBar,
+  DiaryEntryCard,
+  DiaryAddModal,
+  DiaryImageViewerModal,
+  getOrderedMedia,
+  MAX_DIARY_MEDIA,
+} from '../components/diary';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Diary'>;
-
-const MOOD_TAGS: { label: string; value: string }[] = [
-  { label: '開心', value: 'happy' },
-  { label: '放鬆', value: 'relaxed' },
-  { label: '治癒', value: 'healing' },
-  { label: '想念', value: 'miss' },
-  { label: '平靜', value: 'calm' },
-];
 
 export default function DiaryScreen({
   navigation,
@@ -51,9 +52,10 @@ export default function DiaryScreen({
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [userInput, setUserInput] = useState('');
   const [selectedMood, setSelectedMood] = useState<string>('happy');
-  const [selectedImageUrls, setSelectedImageUrls] = useState<string[]>([]);
-  const [selectedVideoUri, setSelectedVideoUri] = useState<string | null>(null);
+  const [postMedia, setPostMedia] = useState<PostMediaItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isDraggingMedia, setIsDraggingMedia] = useState(false);
+  const [viewingVideoUri, setViewingVideoUri] = useState<string | null>(null);
   const [isBeautifying, setIsBeautifying] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
@@ -61,11 +63,228 @@ export default function DiaryScreen({
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
+  const entryGridContentWidth = windowWidth - spacing.xl * 2 - spacing.sm * 2;
+  const entryGridCellSize = Math.floor(
+    (entryGridContentWidth - COMMUNITY_LAYOUT.IMG_GAP * 2) / 3
+  );
+
+  const sheetHeightMax = windowHeight - insets.top;
+  const sheetHeightInitial = Math.floor(sheetHeightMax * 0.55);
+  const sheetHeightMin = Math.floor(sheetHeightMax * 0.4);
+  const animatedSheetHeight = useRef(new Animated.Value(sheetHeightInitial)).current;
+  const dragStartHeightRef = useRef(sheetHeightInitial);
+  const sheetMaxRef = useRef(sheetHeightMax);
+  const sheetMinRef = useRef(sheetHeightMin);
+  const sheetInitialRef = useRef(sheetHeightInitial);
+  sheetMaxRef.current = sheetHeightMax;
+  sheetMinRef.current = sheetHeightMin;
+  sheetInitialRef.current = sheetHeightInitial;
+
+  useEffect(() => {
+    if (addModalVisible) animatedSheetHeight.setValue(sheetHeightInitial);
+  }, [addModalVisible, sheetHeightInitial, animatedSheetHeight]);
+
+  const sheetPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 4,
+      onPanResponderGrant: () => {
+        animatedSheetHeight.stopAnimation((v) => {
+          dragStartHeightRef.current =
+            typeof v === 'number' ? v : sheetInitialRef.current;
+        });
+      },
+      onPanResponderMove: (_, g) => {
+        const maxH = sheetMaxRef.current;
+        const minH = sheetMinRef.current;
+        const newH = Math.min(
+          maxH,
+          Math.max(minH, dragStartHeightRef.current - g.dy)
+        );
+        animatedSheetHeight.setValue(newH);
+      },
+      onPanResponderRelease: () => {
+        animatedSheetHeight.stopAnimation((v) => {
+          dragStartHeightRef.current =
+            typeof v === 'number' ? v : sheetInitialRef.current;
+        });
+      },
+    })
+  ).current;
+
   const openImageViewer = (urls: string[], index: number) => {
     setImageViewerUrls(urls);
     setImageViewerIndex(index);
     setImageViewerVisible(true);
   };
+
+  const isAssetVideo = useCallback(
+    (a: {
+      type?: string | null;
+      duration?: number | null;
+      mimeType?: string | null;
+      fileName?: string | null;
+      uri?: string;
+    }) => {
+      if (a.type === 'video' || a.type === 'pairedVideo') return true;
+      if (a.duration != null && a.duration > 0) return true;
+      const mime = (a.mimeType ?? '').toLowerCase();
+      if (mime.startsWith('video/')) return true;
+      const name = (a.fileName ?? a.uri ?? '').toLowerCase();
+      if (/\.(mp4|mov|avi|webm|mkv|m4v|3gp)(\?|$)/i.test(name)) return true;
+      return false;
+    },
+    []
+  );
+
+  const appendAssetsToPostMedia = useCallback(
+    (
+      assets: {
+        uri: string;
+        type?: string | null;
+        duration?: number | null;
+        mimeType?: string | null;
+        fileName?: string | null;
+      }[],
+      asType?: 'image' | 'video'
+    ) => {
+      setPostMedia((prev) => {
+        const maxNew = MAX_DIARY_MEDIA - prev.length;
+        if (maxNew <= 0) return prev;
+        const added: PostMediaItem[] = assets
+          .slice(0, maxNew)
+          .filter((a) => a.uri)
+          .map((a) => ({
+            uri: a.uri,
+            type: asType ?? (isAssetVideo(a) ? 'video' : 'image'),
+          }));
+        return [...prev, ...added];
+      });
+    },
+    [isAssetVideo]
+  );
+
+  const pickImagesOnly = useCallback(async () => {
+    if (postMedia.length >= MAX_DIARY_MEDIA) {
+      Alert.alert('提示', `視頻與圖片合計最多 ${MAX_DIARY_MEDIA} 個`);
+      return;
+    }
+    requestAnimationFrame(() => {
+      setTimeout(async () => {
+        try {
+          const { status } =
+            await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') return;
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: 'images',
+            allowsMultipleSelection: true,
+            quality: 0.8,
+            selectionLimit: MAX_DIARY_MEDIA - postMedia.length,
+          });
+          if (!result.canceled && result.assets?.length) {
+            requestAnimationFrame(() => {
+              appendAssetsToPostMedia(result.assets, 'image');
+            });
+          }
+        } catch (e) {
+          console.warn(e);
+        }
+      }, 200);
+    });
+  }, [postMedia.length, appendAssetsToPostMedia]);
+
+  const pickVideosOnly = useCallback(async () => {
+    if (postMedia.length >= MAX_DIARY_MEDIA) {
+      Alert.alert('提示', `視頻與圖片合計最多 ${MAX_DIARY_MEDIA} 個`);
+      return;
+    }
+    const limit = MAX_DIARY_MEDIA - postMedia.length;
+    requestAnimationFrame(() => {
+      setTimeout(async () => {
+        try {
+          const { status } =
+            await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') return;
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['videos'],
+            allowsMultipleSelection: Platform.OS !== 'ios',
+            selectionLimit: Platform.OS === 'ios' ? 1 : limit,
+            allowsEditing: Platform.OS === 'ios',
+            ...(Platform.OS === 'ios' && {
+              presentationStyle:
+                ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+            }),
+          });
+          if (!result.canceled && result.assets?.length) {
+            requestAnimationFrame(() => {
+              appendAssetsToPostMedia(result.assets, 'video');
+            });
+          }
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? '');
+          if (msg.includes('3164') || msg.includes('PHPhotosError')) {
+            Alert.alert(
+              '無法加載視頻',
+              '該視頻可能存儲在 iCloud 且未下載到本機。請先在「照片」中打開該視頻，等待下載完成後再試。'
+            );
+          } else {
+            console.warn(e);
+          }
+        }
+      }, 200);
+    });
+  }, [postMedia.length, appendAssetsToPostMedia]);
+
+  useEffect(() => {
+    const videosToProcess = postMedia.filter(
+      (m) => m.type === 'video' && !m.thumbnailUri
+    );
+    if (videosToProcess.length === 0) return;
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      Promise.all(
+        videosToProcess.map(async (item) => {
+          try {
+            const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(
+              item.uri,
+              { time: 0 }
+            );
+            return { videoUri: item.uri, thumbnailUri: thumbUri };
+          } catch {
+            return { videoUri: item.uri, thumbnailUri: null as string | null };
+          }
+        })
+      ).then((results) => {
+        if (cancelled) return;
+        setPostMedia((prev) =>
+          prev.map((m) => {
+            const r = results.find((x) => x.videoUri === m.uri);
+            if (r?.thumbnailUri && m.type === 'video')
+              return { ...m, thumbnailUri: r.thumbnailUri };
+            return m;
+          })
+        );
+      });
+    });
+    return () => {
+      cancelled = true;
+      task.cancel();
+    };
+  }, [postMedia]);
+
+  const removePostMedia = useCallback((uri: string) => {
+    setPostMedia((prev) => prev.filter((m) => m.uri !== uri));
+  }, []);
+
+  const reorderPostMedia = useCallback((fromIndex: number, toIndex: number) => {
+    setPostMedia((prev) => {
+      const arr = [...prev];
+      const [removed] = arr.splice(fromIndex, 1);
+      arr.splice(toIndex, 0, removed);
+      return arr;
+    });
+  }, []);
 
   useEffect(() => {
     mockApi.fetchDiaryEntries().then(setEntries);
@@ -77,7 +296,9 @@ export default function DiaryScreen({
     }
   }, [route.params?.openAdd]);
 
-  const filteredEntries = filterDate ? entries.filter((e) => e.date === filterDate) : entries;
+  const filteredEntries = filterDate
+    ? entries.filter((e) => e.date === filterDate)
+    : entries;
 
   const handleBeautify = async () => {
     if (!userInput) return;
@@ -93,29 +314,58 @@ export default function DiaryScreen({
   };
 
   const handleGenerate = async () => {
-    const hasMedia = selectedImageUrls.length > 0 || selectedVideoUri;
+    const hasMedia = postMedia.length > 0;
     if (!userInput && !hasMedia) return;
     setIsGenerating(true);
     try {
-      const firstImage = selectedImageUrls[0] ?? selectedVideoUri ?? null;
+      const mediaOrder = postMedia.map((m) => m.type);
+      const imageUrls = postMedia
+        .filter((m) => m.type === 'image')
+        .map((m) => m.uri);
+      const videoUrls = postMedia
+        .filter((m) => m.type === 'video')
+        .map((m) => m.uri);
+      const videoThumbnailUrls = postMedia
+        .filter((m) => m.type === 'video')
+        .map((m) => m.thumbnailUri);
+      const firstVideo = videoUrls[0] ?? null;
+      const firstImage = imageUrls[0] ?? firstVideo ?? null;
       const newEntry = await mockApi.createDiaryEntry(
         userInput,
         null,
         firstImage,
-        selectedImageUrls.length > 0 ? selectedImageUrls : null,
-        selectedMood ?? 'happy'
+        imageUrls.length > 0 ? imageUrls : null,
+        selectedMood ?? 'happy',
+        videoUrls.length > 0 ? videoUrls[0] : null,
+        mediaOrder,
+        videoThumbnailUrls[0] ?? null,
+        videoUrls.length > 0 ? videoUrls : null,
+        videoThumbnailUrls.length > 0 ? videoThumbnailUrls : null
       );
       const entryToAdd: DiaryEntry = {
         ...newEntry,
         imageUrl: newEntry.imageUrl ?? firstImage ?? undefined,
-        imageUrls: (newEntry.imageUrls && newEntry.imageUrls.length > 0)
-          ? newEntry.imageUrls
-          : (firstImage ? [firstImage] : undefined),
+        imageUrls:
+          newEntry.imageUrls && newEntry.imageUrls.length > 0
+            ? newEntry.imageUrls
+            : firstImage
+              ? [firstImage]
+              : undefined,
+        videoUrl: newEntry.videoUrl ?? firstVideo ?? undefined,
+        videoUrls:
+          newEntry.videoUrls ?? (videoUrls.length > 0 ? videoUrls : undefined),
+        videoThumbnailUrl:
+          newEntry.videoThumbnailUrl ?? videoThumbnailUrls[0],
+        videoThumbnailUrls:
+          newEntry.videoThumbnailUrls ??
+          (videoThumbnailUrls.length > 0
+            ? (videoThumbnailUrls as (string | undefined)[])
+            : undefined),
+        mediaOrder: newEntry.mediaOrder ?? mediaOrder,
       };
       setEntries((prev) => [entryToAdd, ...prev]);
       setUserInput('');
-      setSelectedImageUrls([]);
-      setSelectedVideoUri(null);
+      setPostMedia([]);
       setSelectedMood('happy');
       setAddModalVisible(false);
     } catch (e) {
@@ -125,49 +375,14 @@ export default function DiaryScreen({
     }
   };
 
-  const MAX_IMAGES = 9;
-  const addImage = () => {
-    if (selectedImageUrls.length >= MAX_IMAGES) {
-      Alert.alert('提示', `最多只能添加 ${MAX_IMAGES} 張圖片`);
-      return;
-    }
-    Alert.alert('添加圖片', '選擇來源', [
-      { text: '相機拍攝', onPress: async () => {
-        const result = await pickFromCamera();
-        if (result) setSelectedImageUrls((prev) => (prev.length >= MAX_IMAGES ? prev : [...prev, result.uri]));
-      }},
-      { text: '從相冊選擇', onPress: async () => {
-        const result = await pickMultipleFromAlbum(MAX_IMAGES, selectedImageUrls.length);
-        if (result?.uris?.length) setSelectedImageUrls((prev) => [...prev, ...result.uris].slice(0, MAX_IMAGES));
-      }},
-      { text: '取消', style: 'cancel' as const },
-    ]);
-  };
-  const removeImage = (index: number) => {
-    setSelectedImageUrls((prev) => prev.filter((_, i) => i !== index));
-  };
-  const addVideo = () => {
-    Alert.alert('添加視頻', '選擇來源', [
-      { text: '相機拍攝', onPress: async () => {
-        const result = await pickVideoFromCamera();
-        if (result) setSelectedVideoUri(result.uri);
-      }},
-      { text: '從相冊選擇', onPress: async () => {
-        const result = await pickVideoFromAlbum();
-        if (result) setSelectedVideoUri(result.uri);
-      }},
-      { text: '取消', style: 'cancel' as const },
-    ]);
-  };
-  const removeVideo = () => setSelectedVideoUri(null);
+  const canAddMedia = postMedia.length < MAX_DIARY_MEDIA;
   const closeAddModal = () => {
+    Keyboard.dismiss();
     setAddModalVisible(false);
     setUserInput('');
-    setSelectedImageUrls([]);
-    setSelectedVideoUri(null);
+    setPostMedia([]);
     setSelectedMood('happy');
   };
-
 
   const performDelete = (id: string) => {
     setEntries((prev) => prev.filter((e) => e.id !== id));
@@ -177,7 +392,9 @@ export default function DiaryScreen({
   const textColor = dark ? '#f8fafc' : colors.gray[800];
   const subColor = dark ? colors.gray[400] : colors.gray[500];
   const glassBg = dark ? 'rgba(30, 41, 59, 0.85)' : 'rgba(255, 255, 255, 0.9)';
-  const glassBorder = dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.2)';
+  const glassBorder = dark
+    ? 'rgba(255,255,255,0.08)'
+    : 'rgba(255,255,255,0.2)';
 
   return (
     <View
@@ -193,7 +410,10 @@ export default function DiaryScreen({
     >
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + spacing.md }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: insets.bottom + spacing.md },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <ViewHeader
@@ -202,7 +422,10 @@ export default function DiaryScreen({
           rightElement={
             <Pressable
               onPress={() => navigation.navigate('Calendar')}
-              style={[styles.calendarBtn, { backgroundColor: glassBg, borderColor: glassBorder }]}
+              style={[
+                styles.calendarBtn,
+                { backgroundColor: glassBg, borderColor: glassBorder },
+              ]}
             >
               <Calendar size={22} color={colors.orange[500]} />
             </Pressable>
@@ -210,108 +433,46 @@ export default function DiaryScreen({
         />
 
         {filterDate && (
-          <View style={[styles.filterBar, { backgroundColor: 'rgba(249, 115, 22, 0.1)', borderColor: 'rgba(249, 115, 22, 0.2)' }]}>
-            <Text style={styles.filterBarText}>正在回味: {filterDate}</Text>
-            <Pressable onPress={() => navigation.navigate('Calendar')}>
-              <Text style={[styles.filterBarLink, { color: subColor }]}>更換日期</Text>
-            </Pressable>
-          </View>
+          <DiaryFilterBar
+            filterDate={filterDate}
+            subColor={subColor}
+            onReplaceDate={() => navigation.navigate('Calendar')}
+          />
         )}
 
         {filteredEntries.length === 0 ? (
-          <View style={styles.empty}>
-            <View style={[styles.emptyIconWrap, { backgroundColor: glassBg }]}>
-              <Heart size={32} color={subColor} />
-            </View>
-            <Text style={[styles.emptyTitle, { color: textColor }]}>這天還沒有記錄喔</Text>
-            <Text style={[styles.emptySub, { color: subColor }]}>試著寫下今天發生的趣事吧...</Text>
-          </View>
+          <DiaryEmptyState dark={dark} glassBg={glassBg} />
         ) : (
           filteredEntries.map((entry) => {
-            const images = (entry.imageUrls && entry.imageUrls.length > 0)
-              ? entry.imageUrls.filter(Boolean)
-              : (entry.imageUrl ? [entry.imageUrl] : []);
-            const maxCells = 9;
-            const overflowCount = images.length > maxCells ? images.length - (maxCells - 1) : 0;
-            const imageCellCount = overflowCount > 0 ? maxCells - 1 : images.length;
-            const showGrid = images.length > 1;
-
+            const orderedMedia = getOrderedMedia(entry);
+            const images =
+              entry.imageUrls && entry.imageUrls.length > 0
+                ? entry.imageUrls.filter(Boolean)
+                : entry.imageUrl
+                  ? [entry.imageUrl]
+                  : [];
             return (
-            <View
-              key={entry.id}
-              style={[styles.entryCardShadowWrap, dark ? shadowGlass.dark : shadowGlass.light]}
-            >
-              <View style={[styles.entryCard, { backgroundColor: glassBg, borderColor: glassBorder, borderTopColor: dark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.55)' }]}>
-              {images.length > 0 && (
-                showGrid ? (
-                  <View style={styles.entryImageGridWrap}>
-                    {Array.from({ length: imageCellCount }).map((_, i) => {
-                      const uri = images[i];
-                      return uri ? (
-                        <Pressable
-                          key={`${entry.id}-img-${i}`}
-                          style={styles.entryImageGridCell}
-                          onPress={() => openImageViewer(images, i)}
-                        >
-                          <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                        </Pressable>
-                      ) : null;
-                    })}
-                    {overflowCount > 0 && (
-                      <Pressable
-                        style={styles.entryImageGridCell}
-                        onPress={() => openImageViewer(images, maxCells - 1)}
-                      >
-                        <View style={[StyleSheet.absoluteFill, styles.entryImageGridOverlay]}>
-                          <Text style={styles.entryImageGridOverlayText}>+{overflowCount}</Text>
-                        </View>
-                      </Pressable>
-                    )}
-                  </View>
-                ) : (
-                  <View style={styles.entryImageSingleWrap}>
-                    <Pressable onPress={() => openImageViewer(images, 0)}>
-                      <Image source={{ uri: images[0] }} style={styles.entryImage} resizeMode="cover" />
-                    </Pressable>
-                  </View>
-                )
-              )}
-              <View style={styles.entryBody}>
-                <View style={styles.entryHead}>
-                  <Text style={[styles.entryDate, { color: subColor }]}>{entry.date}</Text>
-                  <View style={styles.entryHeadRight}>
-                    <View style={[styles.styleTag, { backgroundColor: 'rgba(249, 115, 22, 0.1)', borderColor: 'rgba(249, 115, 22, 0.2)' }]}>
-                      <Text style={styles.styleTagText}>{entry.style}</Text>
-                    </View>
-                    {confirmDeleteId === entry.id ? (
-                      <View style={styles.deleteConfirmRow}>
-                        <Pressable onPress={() => performDelete(entry.id)} style={styles.deleteConfirmBtn}>
-                          <Text style={styles.deleteConfirmBtnText}>確認</Text>
-                        </Pressable>
-                        <Pressable onPress={() => setConfirmDeleteId(null)} style={styles.deleteCancelBtn}>
-                          <Text style={[styles.deleteCancelBtnText, { color: subColor }]}>取消</Text>
-                        </Pressable>
-                      </View>
-                    ) : (
-                      <Pressable onPress={() => setConfirmDeleteId(entry.id)}>
-                        <Trash2 size={14} color={subColor} />
-                      </Pressable>
-                    )}
-                  </View>
-                </View>
-                <Text style={[styles.entryContent, { color: textColor }]}>{entry.content}</Text>
-                <View style={styles.entryActions}>
-                  <Pressable style={styles.entryAction}>
-                    <Heart size={16} color={subColor} />
-                    <Text style={[styles.entryActionText, { color: subColor }]}>收藏</Text>
-                  </Pressable>
-                  <Pressable style={styles.entryAction}>
-                    <Text style={[styles.entryActionText, { color: subColor }]}>分享</Text>
-                  </Pressable>
-                </View>
-              </View>
-              </View>
-            </View>
+              <DiaryEntryCard
+                key={entry.id}
+                entryId={entry.id}
+                orderedMedia={orderedMedia}
+                images={images}
+                entryDate={entry.date}
+                entryStyle={entry.style}
+                content={entry.content}
+                cellSize={entryGridCellSize}
+                dark={dark}
+                glassBg={glassBg}
+                glassBorder={glassBorder}
+                textColor={textColor}
+                subColor={subColor}
+                showDeleteConfirm={confirmDeleteId === entry.id}
+                onDeleteRequest={() => setConfirmDeleteId(entry.id)}
+                onDeleteConfirm={() => performDelete(entry.id)}
+                onDeleteCancel={() => setConfirmDeleteId(null)}
+                onVideoPress={setViewingVideoUri}
+                onImagePress={openImageViewer}
+              />
             );
           })
         )}
@@ -332,196 +493,53 @@ export default function DiaryScreen({
         <Plus size={28} color="#fff" strokeWidth={2.5} />
       </Pressable>
 
-      <Modal
+      <DiaryAddModal
         visible={addModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={closeAddModal}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
-          <Pressable style={styles.modalBackdrop} onPress={closeAddModal} />
-          <View
-            style={[
-              styles.modalBox,
-              {
-                backgroundColor: dark ? colors.slate[900] : '#fff',
-                paddingBottom: Math.max(insets.bottom, spacing.lg),
-              },
-            ]}
-          >
-            <View style={[styles.modalHeader, { borderBottomColor: glassBorder }]}>
-              <Text style={[styles.modalTitle, { color: textColor }]}>添加日記</Text>
-              <Pressable onPress={closeAddModal} style={styles.modalCloseBtn}>
-                <X size={24} color={subColor} />
-              </Pressable>
-            </View>
+        onClose={closeAddModal}
+        sheetHeightMax={sheetHeightMax}
+        sheetHeightInitial={sheetHeightInitial}
+        animatedSheetHeight={animatedSheetHeight}
+        sheetPanHandlers={sheetPanResponder.panHandlers}
+        dark={dark}
+        insetsBottom={insets.bottom}
+        textColor={textColor}
+        subColor={subColor}
+        glassBg={glassBg}
+        glassBorder={glassBorder}
+        userInput={userInput}
+        onUserInputChange={setUserInput}
+        selectedMood={selectedMood}
+        onMoodSelect={setSelectedMood}
+        postMedia={postMedia}
+        onReorderMedia={reorderPostMedia}
+        onRemoveMedia={removePostMedia}
+        isDraggingMedia={isDraggingMedia}
+        onDragStart={() => setIsDraggingMedia(true)}
+        onDragEnd={() => setIsDraggingMedia(false)}
+        canAddMedia={canAddMedia}
+        onPickImages={pickImagesOnly}
+        onPickVideos={pickVideosOnly}
+        onBeautify={handleBeautify}
+        isBeautifying={isBeautifying}
+        onSend={handleGenerate}
+        isGenerating={isGenerating}
+        canSend={Boolean(userInput || postMedia.length > 0)}
+      />
 
-            <ScrollView
-              style={styles.modalScroll}
-              contentContainerStyle={styles.modalScrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={[styles.modalInputWrap, { backgroundColor: dark ? colors.slate[800] : colors.gray[50] }]}>
-                <TextInput
-                  value={userInput}
-                  onChangeText={setUserInput}
-                  placeholder="記錄下此刻的萌寵時光..."
-                  placeholderTextColor={subColor}
-                  style={[styles.modalInput, { color: textColor }]}
-                  multiline
-                  maxLength={500}
-                />
-              </View>
-
-              <View style={styles.moodSection}>
-                <Text style={[styles.moodLabel, { color: subColor }]}>心情</Text>
-                <View style={styles.moodTagsWrap}>
-                {MOOD_TAGS.map(({ value, label }) => (
-                  <Pressable
-                    key={value}
-                    onPress={() => setSelectedMood(value)}
-                    style={[
-                      styles.moodTag,
-                      {
-                        backgroundColor: selectedMood === value ? 'rgba(249, 115, 22, 0.2)' : glassBg,
-                        borderColor: selectedMood === value ? 'rgba(249, 115, 22, 0.4)' : glassBorder,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.moodTagText, { color: selectedMood === value ? colors.orange[500] : subColor }]}>
-                      {label}
-                    </Text>
-                  </Pressable>
-                ))}
-                </View>
-              </View>
-
-              {(selectedVideoUri || selectedImageUrls.length > 0) && (
-                <View style={styles.mediaSection}>
-                  {selectedVideoUri && (
-                    <View style={styles.mediaBlock}>
-                      <Text style={[styles.mediaLabel, { color: subColor }]}>視頻</Text>
-                      <View style={[styles.videoPreview, { backgroundColor: dark ? colors.slate[800] : colors.gray[50], borderColor: glassBorder }]}>
-                        <Video size={40} color={subColor} />
-                        <Text style={[styles.videoPlaceholderText, { color: subColor }]}>已選擇視頻</Text>
-                        <Pressable onPress={removeVideo} style={[styles.previewRemove, styles.previewRemoveVideo]}>
-                          <X size={14} color="#fff" />
-                        </Pressable>
-                      </View>
-                    </View>
-                  )}
-                  {selectedImageUrls.length > 0 && (
-                    <View style={styles.mediaBlock}>
-                      <Text style={[styles.mediaLabel, { color: subColor }]}>圖片 ({selectedImageUrls.length})</Text>
-                      <View style={styles.imageGrid}>
-                        {selectedImageUrls.map((uri, index) => (
-                          <View key={`${uri}-${index}`} style={styles.imageGridItem}>
-                            <Image source={{ uri }} style={styles.imageGridThumb} resizeMode="cover" />
-                            <Pressable onPress={() => removeImage(index)} style={[styles.previewRemove, styles.previewRemoveGrid]}>
-                              <X size={12} color="#fff" />
-                            </Pressable>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              <View style={[styles.modalActions, { borderTopColor: glassBorder }]}>
-                <Pressable onPress={addImage} style={[styles.modalActionBtn, { backgroundColor: glassBg, borderColor: glassBorder }]}>
-                  <ImageIcon size={20} color={colors.orange[500]} />
-                  <Text style={[styles.modalActionBtnText, { color: textColor }]}>添加圖片</Text>
-                </Pressable>
-                <Pressable onPress={addVideo} style={[styles.modalActionBtn, { backgroundColor: glassBg, borderColor: glassBorder }]}>
-                  <Video size={20} color={colors.orange[500]} />
-                  <Text style={[styles.modalActionBtnText, { color: textColor }]}>添加視頻</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleBeautify}
-                  disabled={!userInput || isBeautifying}
-                  style={[styles.modalActionBtn, { backgroundColor: glassBg, borderColor: glassBorder }]}
-                >
-                  {isBeautifying ? (
-                    <RefreshCw size={20} color={colors.orange[500]} />
-                  ) : (
-                    <Wand2 size={20} color={subColor} />
-                  )}
-                  <Text style={[styles.modalActionBtnText, { color: textColor }]}>潤色</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleGenerate}
-                  disabled={(!userInput && selectedImageUrls.length === 0 && !selectedVideoUri) || isGenerating}
-                  style={[
-                    styles.modalSendBtnSmall,
-                    {
-                      backgroundColor:
-                        userInput || selectedImageUrls.length > 0 || selectedVideoUri
-                          ? colors.orange[500]
-                          : (dark ? colors.slate[800] : colors.gray[500]),
-                    },
-                  ]}
-                >
-                  {isGenerating ? (
-                    <RefreshCw size={18} color="#fff" />
-                  ) : (
-                    <Send size={18} color="#fff" />
-                  )}
-                  <Text style={styles.modalSendBtnTextSmall}>發送</Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      <Modal
+      <DiaryImageViewerModal
         visible={imageViewerVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setImageViewerVisible(false)}
-      >
-        <View style={[styles.imageViewerOverlay, { width: windowWidth, height: windowHeight }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setImageViewerVisible(false)} />
-          <View style={styles.imageViewerHeader}>
-            <Text style={styles.imageViewerIndex}>
-              {imageViewerUrls.length > 1 ? `${imageViewerIndex + 1}/${imageViewerUrls.length}` : ''}
-            </Text>
-            <Pressable onPress={() => setImageViewerVisible(false)} style={styles.imageViewerClose}>
-              <X size={28} color="#fff" />
-            </Pressable>
-          </View>
-          {imageViewerUrls.length > 1 ? (
-            <FlatList
-              data={imageViewerUrls}
-              horizontal
-              pagingEnabled
-              initialScrollIndex={imageViewerIndex}
-              getItemLayout={(_, index) => ({ length: windowWidth, offset: windowWidth * index, index })}
-              keyExtractor={(uri, i) => uri + i}
-              onMomentumScrollEnd={(e) => {
-                const i = Math.round(e.nativeEvent.contentOffset.x / windowWidth);
-                setImageViewerIndex(Math.min(i, imageViewerUrls.length - 1));
-              }}
-              renderItem={({ item }) => (
-                <View style={{ width: windowWidth, height: windowHeight, justifyContent: 'center' }}>
-                  <Image source={{ uri: item }} style={{ width: windowWidth, height: windowHeight }} resizeMode="contain" />
-                </View>
-              )}
-            />
-          ) : (
-            imageViewerUrls.length > 0 && (
-              <View style={styles.imageViewerSingle}>
-                <Image source={{ uri: imageViewerUrls[0] }} style={{ width: windowWidth, height: windowHeight }} resizeMode="contain" />
-              </View>
-            )
-          )}
-        </View>
-      </Modal>
+        urls={imageViewerUrls}
+        currentIndex={imageViewerIndex}
+        onClose={() => setImageViewerVisible(false)}
+        onIndexChange={setImageViewerIndex}
+      />
+
+      {viewingVideoUri ? (
+        <FullscreenVideoModal
+          videoUri={viewingVideoUri}
+          onClose={() => setViewingVideoUri(null)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -538,94 +556,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  filterBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 12,
-    borderRadius: borderRadius['2xl'],
-    borderWidth: 1,
-    marginBottom: spacing.xl,
-  },
-  filterBarText: { fontSize: 12, fontWeight: '700', color: colors.orange[600] },
-  filterBarLink: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  empty: { alignItems: 'center', paddingVertical: 48, gap: spacing.lg },
-  emptyIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyTitle: { fontSize: 14, fontWeight: '800' },
-  emptySub: { fontSize: 12, fontWeight: '600' },
-  entryCardShadowWrap: {
-    marginBottom: spacing.xl,
-    borderRadius: 32,
-    overflow: 'visible',
-  },
-  entryCard: {
-    borderRadius: 32,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  entryImageSingleWrap: { width: '100%', alignItems: 'center' },
-  entryImage: { width: '100%', height: 192 },
-  entryImageGridWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    padding: spacing.sm,
-    gap: spacing.sm,
-  },
-  entryImageGridCell: {
-    width: (Dimensions.get('window').width - spacing.xl * 2 - spacing.sm * 2 - spacing.sm * 2 * 2) / 3,
-    height: (Dimensions.get('window').width - spacing.xl * 2 - spacing.sm * 2 - spacing.sm * 2 * 2) / 3,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(0,0,0,0.1)',
-  },
-  entryImageGridOverlay: {
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  entryImageGridOverlayText: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  imageViewerOverlay: {
-    backgroundColor: 'rgba(0,0,0,0.95)',
-    justifyContent: 'center',
-  },
-  imageViewerHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl + 40,
-    zIndex: 1,
-  },
-  imageViewerIndex: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.9)' },
-  imageViewerClose: { padding: spacing.sm },
-  imageViewerSingle: { flex: 1, justifyContent: 'center' },
-  entryBody: { padding: spacing.xl },
-  entryHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  entryDate: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  entryHeadRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  styleTag: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
-  styleTagText: { fontSize: 9, fontWeight: '800', color: colors.orange[500] },
-  deleteConfirmRow: { flexDirection: 'row', gap: 8 },
-  deleteConfirmBtn: { backgroundColor: '#ef4444', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  deleteConfirmBtnText: { fontSize: 10, fontWeight: '800', color: '#fff' },
-  deleteCancelBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  deleteCancelBtnText: { fontSize: 10, fontWeight: '800' },
-  entryContent: { fontSize: 15, fontWeight: '700', lineHeight: 24, marginBottom: spacing.lg },
-  entryActions: { flexDirection: 'row', gap: spacing.xl, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)' },
-  entryAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  entryActionText: { fontSize: 10, fontWeight: '700' },
   fab: {
     position: 'absolute',
     width: 56,
@@ -634,113 +564,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'ios'
-      ? { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 }
+      ? {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 8,
+        }
       : { elevation: 8 }),
   },
-  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
-  modalBox: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: Dimensions.get('window').height * 0.85,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    borderBottomWidth: 1,
-  },
-  modalTitle: { fontSize: 18, fontWeight: '800' },
-  modalCloseBtn: { padding: spacing.sm },
-  modalScroll: { maxHeight: 400 },
-  modalScrollContent: { padding: spacing.lg, paddingBottom: spacing.xl },
-  modalInputWrap: {
-    borderRadius: 16,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.lg,
-    minHeight: 100,
-  },
-  modalInput: { fontSize: 15, fontWeight: '600', minHeight: 80 },
-  moodSection: { marginBottom: spacing.lg },
-  moodLabel: { fontSize: 12, fontWeight: '700', marginBottom: spacing.sm },
-  moodTagsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  moodTag: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  moodTagText: { fontSize: 12, fontWeight: '700' },
-  mediaSection: { marginBottom: spacing.lg },
-  mediaBlock: { marginBottom: spacing.lg },
-  mediaLabel: { fontSize: 12, fontWeight: '700', marginBottom: spacing.sm },
-  videoPreview: {
-    height: 120,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  videoPlaceholderText: { fontSize: 12, marginTop: spacing.sm },
-  previewRemove: {
-    position: 'absolute',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  previewRemoveVideo: { top: spacing.sm, right: spacing.sm },
-  previewRemoveGrid: { top: 4, right: 4, width: 22, height: 22, borderRadius: 11 },
-  imageGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  imageGridItem: { position: 'relative' },
-  imageGridThumb: {
-    width: 80,
-    height: 80,
-    borderRadius: 12,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    flexWrap: 'nowrap',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xs,
-    borderTopWidth: 1,
-  },
-  modalActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: 12,
-    borderWidth: 1,
-    flexShrink: 0,
-  },
-  modalActionBtnText: { fontSize: 13, fontWeight: '700' },
-  modalSendBtnSmall: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: 12,
-    flexShrink: 0,
-    marginLeft: 'auto',
-  },
-  modalSendBtnTextSmall: { fontSize: 13, fontWeight: '800', color: '#fff' },
 });
