@@ -10,3 +10,9 @@ export const MOOD_TAGS: { label: string; value: string }[] = [
 ];
 
 export const MAX_DIARY_MEDIA = 9;
+
+/** 图片大小上限 10MB */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** 视频时长上限 5 分钟（毫秒） */
+export const MAX_VIDEO_DURATION_MS = 5 * 60 * 1000;

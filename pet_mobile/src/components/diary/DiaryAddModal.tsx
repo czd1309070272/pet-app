@@ -76,7 +76,13 @@ const styles = StyleSheet.create({
   moodTagText: { fontSize: 12, fontWeight: '700' },
   mediaSection: { marginBottom: spacing.lg },
   mediaBlock: { marginBottom: spacing.lg },
-  mediaLabel: { fontSize: 12, fontWeight: '700', marginBottom: spacing.sm },
+  mediaLabel: { fontSize: 12, fontWeight: '700' },
+  mediaLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
   modalActions: {
     flexDirection: 'row',
     flexWrap: 'nowrap',
@@ -111,6 +117,10 @@ const styles = StyleSheet.create({
     marginRight: spacing.lg,
   },
   modalSendBtnTextSmall: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  mediaHint: { fontSize: 11 },
+  progressWrap: { height: 4, borderRadius: 2, overflow: 'hidden', marginTop: 6 },
+  progressTrack: { height: '100%', borderRadius: 2 },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: colors.orange[500] },
 });
 
 export function DiaryAddModal({
@@ -144,6 +154,7 @@ export function DiaryAddModal({
   onSend,
   isGenerating,
   canSend,
+  mediaUploadProgress,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -175,6 +186,7 @@ export function DiaryAddModal({
   onSend: () => void;
   isGenerating: boolean;
   canSend: boolean;
+  mediaUploadProgress?: number | null;
 }) {
   return (
     <Modal
@@ -285,9 +297,31 @@ export function DiaryAddModal({
 
                 <View style={styles.mediaSection}>
                   <View style={styles.mediaBlock}>
-                    <Text style={[styles.mediaLabel, { color: subColor }]}>
-                      圖片/視頻
-                    </Text>
+                    <View style={styles.mediaLabelRow}>
+                      <Text style={[styles.mediaLabel, { color: subColor }]}>
+                        圖片/視頻
+                      </Text>
+                      <Text style={[styles.mediaHint, { color: subColor }]}>
+                        圖片小於 10MB，視頻 5 分鐘以內
+                      </Text>
+                    </View>
+                    {mediaUploadProgress != null ? (
+                      <View
+                        style={[
+                          styles.progressWrap,
+                          { backgroundColor: dark ? colors.slate[700] : colors.gray[200] },
+                        ]}
+                      >
+                        <View style={styles.progressTrack}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              { width: `${Math.min(100, Math.max(0, mediaUploadProgress * 100))}%` },
+                            ]}
+                          />
+                        </View>
+                      </View>
+                    ) : null}
                     {postMedia.length > 0 ? (
                       <DraggableMediaGrid
                         items={postMedia}

@@ -30,7 +30,7 @@ export function getOrderedMedia(entry: DiaryEntry): OrderedMediaItem[] {
   if (entry.mediaOrder && entry.mediaOrder.length > 0) {
     let imgIdx = 0;
     let vidIdx = 0;
-    return entry.mediaOrder
+    const ordered = entry.mediaOrder
       .map((t): OrderedMediaItem | null => {
         if (t === 'video' && vidIdx < videos.length)
           return { type: 'video', uri: videos[vidIdx], thumbnailUri: videoThumbs[vidIdx++] };
@@ -39,6 +39,8 @@ export function getOrderedMedia(entry: DiaryEntry): OrderedMediaItem[] {
         return null;
       })
       .filter((m): m is OrderedMediaItem => m != null && Boolean(m.uri));
+    // 若 mediaOrder 解析结果为空但实际有图片/视频，回退到按顺序展示
+    if (ordered.length > 0) return ordered;
   }
   if (!hasVideo) return images.map((uri) => ({ type: 'image' as const, uri }));
   const videoItems = videos.map((uri, i) => ({

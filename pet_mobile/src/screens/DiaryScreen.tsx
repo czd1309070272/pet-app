@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
+  Text,
   ScrollView,
   Pressable,
+  Modal,
   StyleSheet,
   Keyboard,
   Platform,
@@ -11,6 +13,7 @@ import {
   PanResponder,
   InteractionManager,
   useWindowDimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar, Plus } from 'lucide-react-native';
@@ -28,12 +31,14 @@ import { FullscreenVideoModal, type PostMediaItem } from '../components/communit
 import {
   DiaryEmptyState,
   DiaryFilterBar,
-  DiaryEntryCard,
   DiaryAddModal,
   DiaryImageViewerModal,
   getOrderedMedia,
   MAX_DIARY_MEDIA,
+  MAX_IMAGE_BYTES,
+  MAX_VIDEO_DURATION_MS,
 } from '../components/diary';
+import { DiaryEntryCard } from '../components/diary/DiaryEntryCard';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Diary'>;
 
@@ -61,9 +66,21 @@ export default function DiaryScreen({
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [imageViewerUrls, setImageViewerUrls] = useState<string[]>([]);
   const [imageViewerIndex, setImageViewerIndex] = useState(0);
+  const [mediaUploadProgress, setMediaUploadProgress] = useState<number | null>(null);
+  const [entryIdForMood, setEntryIdForMood] = useState<string | null>(null);
+  const [moodSelectMode, setMoodSelectMode] = useState(false);
+  const [selectedMoodImageUrls, setSelectedMoodImageUrls] = useState<string[]>([]);
+  const [generatingVisible, setGeneratingVisible] = useState(false);
+  const [generatingCurrent, setGeneratingCurrent] = useState(0);
+  const [generatingTotal, setGeneratingTotal] = useState(0);
+  const [generatingPhase, setGeneratingPhase] = useState<'progress' | 'done'>('progress');
+  const [generatedResults, setGeneratedResults] = useState<
+    Record<string, { comicUrls: string[] }>
+  >({});
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
-  const entryGridContentWidth = windowWidth - spacing.xl * 2 - spacing.sm * 2;
+  const entryGridContentWidth =
+    windowWidth - insets.left - insets.right - spacing.md * 2 - spacing.sm * 2;
   const entryGridCellSize = Math.floor(
     (entryGridContentWidth - COMMUNITY_LAYOUT.IMG_GAP * 2) / 3
   );
@@ -83,6 +100,41 @@ export default function DiaryScreen({
   useEffect(() => {
     if (addModalVisible) animatedSheetHeight.setValue(sheetHeightInitial);
   }, [addModalVisible, sheetHeightInitial, animatedSheetHeight]);
+
+  const STEP_MS = 1500;
+  useEffect(() => {
+    if (!generatingVisible) return;
+    const t = setTimeout(() => {
+      if (generatingPhase === 'progress') {
+        if (generatingCurrent < generatingTotal) {
+          setGeneratingCurrent((c) => c + 1);
+        } else if (generatingTotal > 0) {
+          setGeneratingPhase('done');
+        }
+      } else {
+        if (entryIdForMood && selectedMoodImageUrls.length > 0) {
+          setGeneratedResults((prev) => ({
+            ...prev,
+            [entryIdForMood]: {
+            comicUrls: [...selectedMoodImageUrls],
+            },
+          }));
+        }
+        setGeneratingVisible(false);
+        setEntryIdForMood(null);
+        setMoodSelectMode(false);
+        setSelectedMoodImageUrls([]);
+      }
+    }, STEP_MS);
+    return () => clearTimeout(t);
+  }, [
+    generatingVisible,
+    generatingPhase,
+    generatingCurrent,
+    generatingTotal,
+    entryIdForMood,
+    selectedMoodImageUrls,
+  ]);
 
   const sheetPanResponder = useRef(
     PanResponder.create({
@@ -175,6 +227,7 @@ export default function DiaryScreen({
           const { status } =
             await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (status !== 'granted') return;
+          setMediaUploadProgress(0.1);
           const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: 'images',
             allowsMultipleSelection: true,
@@ -182,11 +235,32 @@ export default function DiaryScreen({
             selectionLimit: MAX_DIARY_MEDIA - postMedia.length,
           });
           if (!result.canceled && result.assets?.length) {
-            requestAnimationFrame(() => {
-              appendAssetsToPostMedia(result.assets, 'image');
+            setMediaUploadProgress(0.4);
+            const assets = result.assets;
+            const valid = assets.filter((a) => {
+              const size = (a as { fileSize?: number }).fileSize;
+              if (size == null) return true;
+              return size <= MAX_IMAGE_BYTES;
             });
+            const skipped = assets.length - valid.length;
+            if (skipped > 0) {
+              Alert.alert('提示', `有 ${skipped} 張圖片超過 10MB 已跳過`);
+            }
+            if (valid.length > 0) {
+              setMediaUploadProgress(0.7);
+              requestAnimationFrame(() => {
+                appendAssetsToPostMedia(valid, 'image');
+                setMediaUploadProgress(1);
+                setTimeout(() => setMediaUploadProgress(null), 400);
+              });
+            } else {
+              setMediaUploadProgress(null);
+            }
+          } else {
+            setMediaUploadProgress(null);
           }
         } catch (e) {
+          setMediaUploadProgress(null);
           console.warn(e);
         }
       }, 200);
@@ -205,6 +279,7 @@ export default function DiaryScreen({
           const { status } =
             await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (status !== 'granted') return;
+          setMediaUploadProgress(0.1);
           const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['videos'],
             allowsMultipleSelection: Platform.OS !== 'ios',
@@ -216,11 +291,32 @@ export default function DiaryScreen({
             }),
           });
           if (!result.canceled && result.assets?.length) {
-            requestAnimationFrame(() => {
-              appendAssetsToPostMedia(result.assets, 'video');
+            setMediaUploadProgress(0.4);
+            const assets = result.assets;
+            const valid = assets.filter((a) => {
+              const durationMs =
+                (a as { duration?: number }).duration ?? 0;
+              return durationMs <= MAX_VIDEO_DURATION_MS;
             });
+            const skipped = assets.length - valid.length;
+            if (skipped > 0) {
+              Alert.alert('提示', '有視頻超過 5 分鐘已跳過，請選擇 5 分鐘以內的視頻');
+            }
+            if (valid.length > 0) {
+              setMediaUploadProgress(0.7);
+              requestAnimationFrame(() => {
+                appendAssetsToPostMedia(valid, 'video');
+                setMediaUploadProgress(1);
+                setTimeout(() => setMediaUploadProgress(null), 400);
+              });
+            } else {
+              setMediaUploadProgress(null);
+            }
+          } else {
+            setMediaUploadProgress(null);
           }
         } catch (e) {
+          setMediaUploadProgress(null);
           const msg = String((e as Error)?.message ?? '');
           if (msg.includes('3164') || msg.includes('PHPhotosError')) {
             Alert.alert(
@@ -318,10 +414,15 @@ export default function DiaryScreen({
     if (!userInput && !hasMedia) return;
     setIsGenerating(true);
     try {
-      const mediaOrder = postMedia.map((m) => m.type);
-      const imageUrls = postMedia
+      const imageUrlsFromType = postMedia
         .filter((m) => m.type === 'image')
         .map((m) => m.uri);
+      const imageUrls =
+        imageUrlsFromType.length > 0
+          ? imageUrlsFromType
+          : postMedia
+              .filter((m) => m.type !== 'video')
+              .map((m) => m.uri);
       const videoUrls = postMedia
         .filter((m) => m.type === 'video')
         .map((m) => m.uri);
@@ -330,6 +431,16 @@ export default function DiaryScreen({
         .map((m) => m.thumbnailUri);
       const firstVideo = videoUrls[0] ?? null;
       const firstImage = imageUrls[0] ?? firstVideo ?? null;
+      const mediaOrder = (() => {
+        const order = postMedia
+          .map((m) => m.type)
+          .filter((t): t is 'image' | 'video' => t === 'image' || t === 'video');
+        if (order.length > 0) return order;
+        return [
+          ...imageUrls.map(() => 'image' as const),
+          ...videoUrls.map(() => 'video' as const),
+        ];
+      })();
       const newEntry = await mockApi.createDiaryEntry(
         userInput,
         null,
@@ -344,13 +455,15 @@ export default function DiaryScreen({
       );
       const entryToAdd: DiaryEntry = {
         ...newEntry,
-        imageUrl: newEntry.imageUrl ?? firstImage ?? undefined,
+        imageUrl: firstImage ?? newEntry.imageUrl ?? undefined,
         imageUrls:
-          newEntry.imageUrls && newEntry.imageUrls.length > 0
-            ? newEntry.imageUrls
-            : firstImage
-              ? [firstImage]
-              : undefined,
+          imageUrls.length > 0
+            ? [...imageUrls]
+            : newEntry.imageUrls && newEntry.imageUrls.length > 0
+              ? newEntry.imageUrls
+              : firstImage
+                ? [firstImage]
+                : undefined,
         videoUrl: newEntry.videoUrl ?? firstVideo ?? undefined,
         videoUrls:
           newEntry.videoUrls ?? (videoUrls.length > 0 ? videoUrls : undefined),
@@ -386,8 +499,58 @@ export default function DiaryScreen({
 
   const performDelete = (id: string) => {
     setEntries((prev) => prev.filter((e) => e.id !== id));
+    setGeneratedResults((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setConfirmDeleteId(null);
   };
+
+  const handleMoodBarPress = useCallback(() => {
+    if (!moodSelectMode) {
+      setMoodSelectMode(true);
+      setSelectedMoodImageUrls([]);
+      return;
+    }
+    if (selectedMoodImageUrls.length === 0) {
+      setMoodSelectMode(false);
+      return;
+    }
+    setGeneratingTotal(selectedMoodImageUrls.length);
+    setGeneratingCurrent(0);
+    setGeneratingPhase('progress');
+    setGeneratingVisible(true);
+  }, [moodSelectMode, selectedMoodImageUrls.length]);
+
+  const handleMoodImageToggle = useCallback((uri: string) => {
+    setSelectedMoodImageUrls((prev) =>
+      prev.includes(uri) ? prev.filter((u) => u !== uri) : [...prev, uri]
+    );
+  }, []);
+
+  const handleDeleteGeneratedResult = useCallback((entryId: string) => {
+    setGeneratedResults((prev) => {
+      const next = { ...prev };
+      delete next[entryId];
+      return next;
+    });
+  }, []);
+
+  const handleRegenerateComic = useCallback((entryId: string) => {
+    setGeneratedResults((prev) => {
+      const next = { ...prev };
+      delete next[entryId];
+      return next;
+    });
+    setEntryIdForMood(entryId);
+    setMoodSelectMode(true);
+    setSelectedMoodImageUrls([]);
+  }, []);
+
+  const handleEditGeneratedComic = useCallback((_entryId: string) => {
+    // 编辑生成漫画：可在此打开编辑弹窗或跳转编辑页
+  }, []);
 
   const textColor = dark ? '#f8fafc' : colors.gray[800];
   const subColor = dark ? colors.gray[400] : colors.gray[500];
@@ -444,13 +607,16 @@ export default function DiaryScreen({
           <DiaryEmptyState dark={dark} glassBg={glassBg} />
         ) : (
           filteredEntries.map((entry) => {
-            const orderedMedia = getOrderedMedia(entry);
             const images =
               entry.imageUrls && entry.imageUrls.length > 0
                 ? entry.imageUrls.filter(Boolean)
                 : entry.imageUrl
                   ? [entry.imageUrl]
                   : [];
+            let orderedMedia = getOrderedMedia(entry);
+            if (orderedMedia.length === 0 && images.length > 0) {
+              orderedMedia = images.map((uri) => ({ type: 'image' as const, uri }));
+            }
             return (
               <DiaryEntryCard
                 key={entry.id}
@@ -472,6 +638,35 @@ export default function DiaryScreen({
                 onDeleteCancel={() => setConfirmDeleteId(null)}
                 onVideoPress={setViewingVideoUri}
                 onImagePress={openImageViewer}
+                onEntryPress={
+                  images.length > 0
+                    ? () => {
+                        setEntryIdForMood((prev) => {
+                          if (prev === entry.id) {
+                            setMoodSelectMode(false);
+                            setSelectedMoodImageUrls([]);
+                            return null;
+                          }
+                          return entry.id;
+                        });
+                      }
+                    : undefined
+                }
+                showMoodPopup={entryIdForMood === entry.id}
+                moodSelectMode={entryIdForMood === entry.id && moodSelectMode}
+                selectedMoodImageUrls={
+                  entryIdForMood === entry.id ? selectedMoodImageUrls : []
+                }
+                onMoodBarPress={
+                  entryIdForMood === entry.id ? handleMoodBarPress : undefined
+                }
+                onMoodImageToggle={
+                  entryIdForMood === entry.id ? handleMoodImageToggle : undefined
+                }
+                generatedResult={generatedResults[entry.id]}
+                onDeleteGeneratedComic={() => handleDeleteGeneratedResult(entry.id)}
+                onRegenerateComic={() => handleRegenerateComic(entry.id)}
+                onEditGeneratedComic={() => handleEditGeneratedComic(entry.id)}
               />
             );
           })
@@ -524,6 +719,7 @@ export default function DiaryScreen({
         onSend={handleGenerate}
         isGenerating={isGenerating}
         canSend={Boolean(userInput || postMedia.length > 0)}
+        mediaUploadProgress={mediaUploadProgress}
       />
 
       <DiaryImageViewerModal
@@ -540,6 +736,31 @@ export default function DiaryScreen({
           onClose={() => setViewingVideoUri(null)}
         />
       ) : null}
+
+      <Modal
+        visible={generatingVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View style={styles.generatingOverlay}>
+          <View style={[styles.generatingCard, { backgroundColor: dark ? colors.slate[900] : '#fff' }]}>
+            <ActivityIndicator size="large" color={colors.orange[500]} />
+            <Text style={[styles.generatingTitle, { color: dark ? '#f8fafc' : colors.gray[800] }]}>
+              {generatingPhase === 'done'
+                ? '生成完成'
+                : generatingCurrent === 0
+                  ? '正在生成...'
+                  : `${generatingCurrent}/${generatingTotal} 已完成`}
+            </Text>
+            <Text style={[styles.generatingSub, { color: dark ? colors.gray[400] : colors.gray[500] }]}>
+              {generatingPhase === 'done'
+                ? '心里话 / 漫画已生成'
+                : '请稍候'}
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -547,7 +768,11 @@ export default function DiaryScreen({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { flex: 1 },
-  scrollContent: { padding: spacing.xl, paddingBottom: spacing.md },
+  scrollContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.md,
+  },
   calendarBtn: {
     width: 44,
     height: 44,
@@ -571,5 +796,30 @@ const styles = StyleSheet.create({
           shadowRadius: 8,
         }
       : { elevation: 8 }),
+  },
+  generatingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  generatingCard: {
+    borderRadius: 24,
+    paddingVertical: spacing.xl * 1.5,
+    paddingHorizontal: spacing.xl * 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 260,
+  },
+  generatingTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: spacing.lg,
+  },
+  generatingSub: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: spacing.sm,
   },
 });
