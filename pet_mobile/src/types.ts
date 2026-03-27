@@ -104,6 +104,16 @@ export interface DiaryEntry {
   imageUrl?: string;
   /** 多图时使用，列表优先用此项；无则用 imageUrl */
   imageUrls?: string[];
+  /** 视频 URI，与图片可同时存在（兼容旧数据，多视频时取第一个） */
+  videoUrl?: string;
+  /** 视频封面（第一帧）URI，用于列表展示（兼容旧数据） */
+  videoThumbnailUrl?: string;
+  /** 多个视频 URI，与 mediaOrder 配合还原顺序 */
+  videoUrls?: string[];
+  /** 多个视频封面 URI，与 videoUrls 一一对应（可能暂无封面） */
+  videoThumbnailUrls?: (string | undefined)[];
+  /** 媒体顺序，与 postMedia 拖拽顺序一致，用于还原九宫格顺序 */
+  mediaOrder?: ('image' | 'video')[];
   petName?: string;
 }
 

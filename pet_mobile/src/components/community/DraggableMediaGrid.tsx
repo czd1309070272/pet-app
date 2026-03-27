@@ -20,6 +20,10 @@ export interface DraggableMediaGridProps {
   isAddDisabled?: boolean;
   /** 为 true 时不渲染网格内的 + 按钮（由外部提供图片/视频按钮） */
   hideAddButton?: boolean;
+  /** 开始拖拽时调用，可用于禁止父级 ScrollView 滚动 */
+  onDragStart?: () => void;
+  /** 结束拖拽时调用 */
+  onDragEnd?: () => void;
 }
 
 export function DraggableMediaGrid({
@@ -30,6 +34,8 @@ export function DraggableMediaGrid({
   dark,
   isAddDisabled = false,
   hideAddButton = false,
+  onDragStart,
+  onDragEnd,
 }: DraggableMediaGridProps) {
   const gridRef = useRef<View>(null);
   const [gridLayout, setGridLayout] = useState<{ x: number; y: number } | null>(null);
@@ -37,6 +43,10 @@ export function DraggableMediaGrid({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSwapIndex = useRef<number | null>(null);
   const dragSourceIndexRef = useRef<number | null>(null);
+  const onDragStartRef = useRef(onDragStart);
+  const onDragEndRef = useRef(onDragEnd);
+  onDragStartRef.current = onDragStart;
+  onDragEndRef.current = onDragEnd;
 
   const cellSize = modalCellSize;
   const cols = 3;
@@ -67,6 +77,7 @@ export function DraggableMediaGrid({
             lastSwapIndex.current = null;
             dragSourceIndexRef.current = index;
             setDragging({ index, pageX: startX, pageY: startY });
+            onDragStartRef.current?.();
             try {
               const Haptics = require('expo-haptics')?.default;
               Haptics?.impactAsync?.('medium').catch(() => {});
@@ -98,17 +109,22 @@ export function DraggableMediaGrid({
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
           }
+          const wasDragging = dragSourceIndexRef.current !== null;
           dragSourceIndexRef.current = null;
           setDragging(null);
           lastSwapIndex.current = null;
+          if (wasDragging) onDragEndRef.current?.();
         },
         onPanResponderTerminate: () => {
           if (longPressTimer.current) {
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
           }
+          const wasDragging = dragSourceIndexRef.current !== null;
           dragSourceIndexRef.current = null;
           setDragging(null);
+          lastSwapIndex.current = null;
+          if (wasDragging) onDragEndRef.current?.();
         },
       }),
     [dragging, getCellIndexFromPosition, onReorder]

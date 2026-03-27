@@ -227,11 +227,17 @@ export async function createDiaryEntry(
   _file?: unknown,
   imageUrl?: string | null,
   imageUrls?: string[] | null,
-  style?: string
+  style?: string,
+  videoUrl?: string | null,
+  mediaOrder?: ('image' | 'video')[] | null,
+  videoThumbnailUrl?: string | null,
+  videoUrls?: string[] | null,
+  videoThumbnailUrls?: (string | undefined)[] | null
 ): Promise<DiaryEntry> {
   await delay(600);
   const urls = imageUrls && imageUrls.length > 0 ? [...imageUrls] : (imageUrl ? [imageUrl] : undefined);
-  const firstUrl = urls?.[0] ?? imageUrl ?? undefined;
+  const vUrls = videoUrls && videoUrls.length > 0 ? [...videoUrls] : (videoUrl ? [videoUrl] : undefined);
+  const firstUrl = urls?.[0] ?? imageUrl ?? vUrls?.[0] ?? videoUrl ?? undefined;
   const newEntry: DiaryEntry = {
     id: 'e_' + Date.now(),
     date: new Date().toISOString().slice(0, 10),
@@ -240,9 +246,22 @@ export async function createDiaryEntry(
     petName: '寶貝',
     imageUrl: firstUrl,
     imageUrls: urls,
+    videoUrl: vUrls?.[0] ?? videoUrl ?? undefined,
+    videoThumbnailUrl: videoThumbnailUrls?.[0] ?? videoThumbnailUrl ?? undefined,
+    videoUrls: vUrls,
+    videoThumbnailUrls: videoThumbnailUrls && videoThumbnailUrls.length > 0 ? [...videoThumbnailUrls] : undefined,
+    mediaOrder: mediaOrder && mediaOrder.length > 0 ? [...mediaOrder] : undefined,
   };
   MOCK_ENTRIES = [newEntry, ...MOCK_ENTRIES];
-  return { ...newEntry, imageUrls: urls ? [...urls] : undefined };
+  return {
+    ...newEntry,
+    imageUrls: urls ? [...urls] : undefined,
+    videoUrl: newEntry.videoUrl,
+    videoThumbnailUrl: newEntry.videoThumbnailUrl,
+    videoUrls: newEntry.videoUrls,
+    videoThumbnailUrls: newEntry.videoThumbnailUrls,
+    mediaOrder: newEntry.mediaOrder,
+  };
 }
 
 export async function beautifyDiary(text: string): Promise<string> {
