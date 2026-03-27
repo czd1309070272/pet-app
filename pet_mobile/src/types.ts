@@ -244,6 +244,59 @@ export interface Comment {
   top_comment_id?: string;
 }
 
+// 2. 定义 API 响应结构 (对应后端 JsonTool)
+
+export interface CommentTreeApiResponse {
+  code: number;
+  msg: string;
+  data: {
+    comments: Array<{
+      id: string;
+      author: string;
+      content: string;
+      avatar: string;
+      likes: number;
+      is_liked: boolean;  // ⚠️ 后端通常返回蛇形命名
+      time: string;
+      vip_level?: string;
+      is_vip?: boolean;
+      reply_to_name?: string;
+      top_comment_id?: string;
+      replyToContent?: string;
+      // 注意：后端返回的扁平列表里没有 replies 字段，这很正常
+    }>;
+    has_more: boolean;
+    next_cursor: string | null;
+  };
+}
+
+export interface Comment2 {
+  id: string;
+  author: string;
+  avatar: string;
+  content: string;
+  time: string;       // 用于游标分页
+  likes: number;
+  isLiked: boolean;
+
+  // 👇 [新增] 核心字段：总回复数（用于判断是否显示“展开/加载更多”按钮）
+  reply_count: number;
+
+  // 👇 [可选] 业务字段
+  isVIP?: boolean;
+  vipLevel?: string;
+  replyToName?: string;
+  replyToContent?: string;
+
+  // 👇 [注意] 在流式加载模式下，这个数组初始通常是空的，或者只包含前3条
+  // 后续的数据会通过 repliesStateMap 管理，不直接依赖这个字段存储全量数据
+  replies?: Comment[];
+
+  // 👇 [冗余但可用] 如果是子评论，可能包含父ID，顶级评论为 null/undefined
+  top_comment_id?: string;
+  parent_id?: string; // 建议加上这个，语义更清晰
+}
+
 export interface Post {
   id: number;
   author: string;

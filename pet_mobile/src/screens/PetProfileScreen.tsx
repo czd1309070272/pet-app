@@ -35,6 +35,7 @@ import * as mockApi from '../api/mock';
 import * as frontApi from '../front_api';
 import { useApp } from '../context/AppContext';
 import { colors, spacing, borderRadius, shadowGlass } from '../theme/tokens';
+import { API_BASE_URL } from '../front_api';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'PetProfile'>;
 
@@ -44,9 +45,15 @@ const TAB_LABELS = { INFO: '基礎', HEALTH: '履歷', TREND: '生長' } as cons
 const AVATAR_PLACEHOLDER = 'https://picsum.photos/seed/pet/200';
 
 function resolveAvatar(avatar: string): string {
-  const s = (avatar ?? '').trim();
+  // const s = (avatar ?? '').trim();
+  // if (s === '') return AVATAR_PLACEHOLDER;
+  // return s.startsWith('http') ? s : `${url_base}${s}`;
+
+  const s = avatar != null ? String(avatar).trim() : '';
+
   if (s === '') return AVATAR_PLACEHOLDER;
-  return s.startsWith('http') ? s : `${url_base}${s}`;
+  const normalizedPath = s.startsWith('/') ? s : `/${s}`;
+  return `${API_BASE_URL}${normalizedPath}`;
 }
 
 export default function PetProfileScreen({ navigation, route }: Props) {

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { UserInfo } from '../types';
 import * as mockApi from '../api/mock';
+import * as authAPI from '../front_api/auth';
 
 type AppContextValue = {
   user: UserInfo | null;
@@ -23,7 +24,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   const refreshUser = useCallback(async () => {
-    const u = await mockApi.getCurrentUser();
+    // const u = await mockApi.getCurrentUser();
+    const u = await authAPI.getCurrentUser();
     setUser(u);
     setIsLoggedIn(!!u);
   }, []);
@@ -31,7 +33,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       setIsLoading(true);
-      const u = await mockApi.getCurrentUser();
+      // const u = await mockApi.getCurrentUser();
+      const u = await authAPI.getCurrentUser();
       setUser(u);
       setIsLoggedIn(!!u);
       setIsLoading(false);
@@ -44,7 +47,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await mockApi.logout();
+    // await mockApi.logout();
+    await authAPI.logout();
     setUser(null);
     setIsLoggedIn(false);
   }, []);

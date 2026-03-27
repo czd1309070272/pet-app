@@ -38,12 +38,11 @@ class CommunityCommentRequest(BaseModel):
     # user_id: int                    # 当前用户 ID（用于权限/个性化）
     token: str                      # 账号token
     post_id: int                    # 主内容 ID（视频、帖子等）
-    timenode: str                       # 页码，从 1 开始（前端点击“加载更多”时 +1）
+    timenode: Optional[str] = None                        # 页码，从 1 开始（前端点击“加载更多”时 +1）
     page_size: int                  # 每页数量，建议默认 20
-    # 父评论 ID：
+    top_comment_id: Optional[int] = None     # 父评论 ID：
     # - 如果为 None → 请求该 post_id 下的【顶级评论】（分页）
     # - 如果为具体 ID（如 1001）→ 请求该顶级评论下的【子评论】（分页）
-    top_comment_id: Optional[int] = None
 
 class CommunityCommentItem(BaseModel):
     id: int

@@ -37,7 +37,7 @@ export {
   getCommunityPosts,
   getCommunityPostsByTime,
   getPostDetail,
-  getPostComments,
+  getPostCommentsByTime,
   createPost,
   likePost,
   commentPost,

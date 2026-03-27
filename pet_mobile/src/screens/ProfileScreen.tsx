@@ -11,7 +11,9 @@ import {
   ActivityIndicator,
   Vibration,
   Platform,
+  Alert,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -106,6 +108,73 @@ export default function ProfileScreen({
   const [showBreedPicker, setShowBreedPicker] = useState(false);
   const [showBirthdayPicker, setShowBirthdayPicker] = useState(false);
   const [tempAvatar, setTempAvatar] = useState('https://picsum.photos/seed/pet_placeholder/200');
+
+  const [isOpeningAvatarPicker, setIsOpeningAvatarPicker] = useState(false);
+
+  const requestMediaPermission = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('權限不足', '需要相冊訪問權限才能選擇照片哦～');
+      return false;
+    }
+    return true;
+  };
+
+  const requestCameraPermission = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('權限不足', '需要相機權限才能拍照哦～');
+      return false;
+    }
+    return true;
+  };
+
+  const pickImageFromLibrary = async () => {
+    if (isOpeningAvatarPicker) return;
+    const ok = await requestMediaPermission();
+    if (!ok) return;
+    try {
+      setIsOpeningAvatarPicker(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.9,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setTempAvatar(result.assets[0].uri);
+      }
+    } finally {
+      setIsOpeningAvatarPicker(false);
+    }
+  };
+
+  const takePhotoWithCamera = async () => {
+    if (isOpeningAvatarPicker) return;
+    const ok = await requestCameraPermission();
+    if (!ok) return;
+    try {
+      setIsOpeningAvatarPicker(true);
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.9,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setTempAvatar(result.assets[0].uri);
+      }
+    } finally {
+      setIsOpeningAvatarPicker(false);
+    }
+  };
+
+  const handleChangePetAvatar = () => {
+    Alert.alert('選擇頭像來源', '為新成員選一張可愛照片吧', [
+      { text: '相冊選擇', onPress: pickImageFromLibrary },
+      { text: '拍照', onPress: takePhotoWithCamera },
+      { text: '取消', style: 'cancel' },
+    ]);
+  };
 
   const loadData = useCallback(async () => {
     const [petsRes, appointmentsRes, photosRes] = await Promise.all([
@@ -399,28 +468,28 @@ export default function ProfileScreen({
       <View style={[styles.section, { paddingLeft: padLeft, paddingRight: padRight, marginTop: SECTION_GAP }]}>
         <Text style={[styles.sectionTitle, { color: textPrimary, marginBottom: 12 }]}>功能服務</Text>
         <View style={[styles.menuCard, { backgroundColor: glassBg, borderColor: glassBorder }]}>
-        {menuItems.map((item, i) => (
-          <Pressable
-            key={i}
-            onPress={item.onPress}
-            style={[styles.menuItem, i < menuItems.length - 1 && [styles.menuItemBorder, { borderBottomColor: dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]]}
-          >
-            <View style={styles.menuItemLeft}>
-              <View style={[styles.menuIconWrap, { backgroundColor: dark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)' }]}>
-                <item.icon size={18} color={item.iconColor} />
-              </View>
-              <Text style={[styles.menuLabel, { color: textPrimary }]}>{item.label}</Text>
-            </View>
-            <View style={styles.menuItemRight}>
-              {item.badge ? (
-                <View style={styles.badgePill}>
-                  <Text style={styles.badgePillText}>{item.badge}</Text>
+          {menuItems.map((item, i) => (
+            <Pressable
+              key={i}
+              onPress={item.onPress}
+              style={[styles.menuItem, i < menuItems.length - 1 && [styles.menuItemBorder, { borderBottomColor: dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]]}
+            >
+              <View style={styles.menuItemLeft}>
+                <View style={[styles.menuIconWrap, { backgroundColor: dark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)' }]}>
+                  <item.icon size={18} color={item.iconColor} />
                 </View>
-              ) : null}
-              <ChevronRight size={16} color={textSecondary} />
-            </View>
-          </Pressable>
-        ))}
+                <Text style={[styles.menuLabel, { color: textPrimary }]}>{item.label}</Text>
+              </View>
+              <View style={styles.menuItemRight}>
+                {item.badge ? (
+                  <View style={styles.badgePill}>
+                    <Text style={styles.badgePillText}>{item.badge}</Text>
+                  </View>
+                ) : null}
+                <ChevronRight size={16} color={textSecondary} />
+              </View>
+            </Pressable>
+          ))}
         </View>
       </View>
 
@@ -630,10 +699,24 @@ export default function ProfileScreen({
               <X size={18} color={textSecondary} />
             </Pressable>
           </View>
-          <View style={styles.addModalAvatarWrap}>
+          {/* <View style={styles.addModalAvatarWrap}>
             <Image source={{ uri: ensureImageUri(tempAvatar) }} style={styles.addModalAvatar} />
             <Pressable onPress={() => setTempAvatar(`https://picsum.photos/seed/pet_${Date.now()}/200`)} style={styles.addModalAvatarBtn}>
               <Camera size={14} color="#fff" />
+            </Pressable>
+          </View> */}
+          <View style={styles.addModalAvatarWrap}>
+            <Image source={{ uri: tempAvatar }} style={styles.addModalAvatar} />
+            <Pressable
+              onPress={handleChangePetAvatar}
+              disabled={isOpeningAvatarPicker}
+              style={[styles.addModalAvatarBtn, isOpeningAvatarPicker && { opacity: 0.7 }]}
+            >
+              {isOpeningAvatarPicker ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Camera size={14} color="#fff" />
+              )}
             </Pressable>
           </View>
           <ScrollView style={styles.addModalFormScroll} showsVerticalScrollIndicator={false}>

@@ -2,11 +2,12 @@
  * 社群模块 API - 与后端 api_CommunityView / api_CommunityHistoryView 对应
  * 支持 Mock 与真实请求切换，请求/响应与后端 schemas 对齐
  */
-import type { Post, Comment, CommunityHistoryItem } from '../types';
+import type { Post, Comment, CommunityHistoryItem, CommentTreeApiResponse } from '../types';
 import { API_BASE_URL } from './config';
+import { getToken } from './requestHelper';
 
 /** 是否使用 Mock 数据（true=Mock，false=真实后端请求） */
-const USE_MOCK = true;
+const USE_MOCK = false;
 
 // ---------- 请求/响应类型（与后端 schemas 对齐） ----------
 
@@ -360,6 +361,25 @@ let mockPosts: Post[] = [
   },
 ];
 
+// 辅助函数：把后端的蛇形命名转为前端驼峰
+const normalizeComment = (raw: any): Comment => ({
+  id: String(raw.id),
+  author: raw.author,
+  content: raw.content,
+  avatar: raw.avatar,
+  likes: raw.likes,
+  isLiked: raw.isLiked ?? raw.is_liked ?? false,
+  time: raw.time,
+  vipLevel: raw.vipLevel ?? raw.vip_level,
+  isVIP: raw.isVIP ?? raw.is_vip,
+  replyToName: raw.replyToName ?? raw.reply_to_name,
+  top_comment_id: raw.top_comment_id ?? raw.topCommentId,
+  replyToContent: raw.replyToContent ?? raw.reply_to_content,
+
+  // 关键：递归转换 replies
+  replies: Array.isArray(raw.replies) ? raw.replies.map(normalizeComment) : [],
+});
+
 const MOCK_USER_NAME = '當前用戶';
 const MOCK_USER_AVATAR = 'https://picsum.photos/seed/me/80';
 
@@ -368,6 +388,75 @@ function countAllComments(list: Comment[]): number {
 }
 
 // ---------- API 方法（Mock 实现） ----------
+/** 获取帖子的顶级评论总数 */
+export async function getTopCommentCount(postId: number): Promise<number> {
+  if (USE_MOCK) {
+    await delay(200);
+    // 模拟返回一个随机数或固定逻辑
+    return Math.floor(Math.random() * 50) + 5;
+  }
+
+  const token = await getToken();
+  if (!token) throw new Error('未登录，无法获取评论数');
+
+  // 构造符合 CommunityCommentRequest 的参数
+  const payload = {
+    token,
+    post_id: postId,
+    timenode: 1,       // 默认第一页
+    page_size: 20,     // 默认每页数量
+    top_comment_id: null, // 明确指定为 null，表示请求顶级评论
+  };
+
+  const { code, data, msg } = await request<{ count: number }>(
+    `${API_BASE_URL}/communityview/get_top_comment_count`,
+    payload
+  );
+
+  if (code !== 200 || typeof data?.count !== 'number') {
+    // 如果失败，可以选择抛出错误或返回 0，这里选择抛出以便上层捕获
+    throw new Error(msg || '获取顶级评论总数失败');
+  }
+
+  return data.count;
+}
+
+/** 获取帖子的某个顶级评论的子评论总数 */
+export async function getReplyCount(postId: number, rootCommentId: string): Promise<number> {
+  if (USE_MOCK) {
+    await delay(200);
+    // 模拟返回一个随机数
+    return Math.floor(Math.random() * 15);
+  }
+
+  const token = await getToken();
+  if (!token) throw new Error('未登录，无法获取回复数');
+
+  const topCommentIdNum = parseInt(rootCommentId, 10);
+  if (isNaN(topCommentIdNum)) {
+    throw new Error('无效的评论 ID');
+  }
+
+  // 构造符合 CommunityCommentRequest 的参数
+  const payload = {
+    token,
+    post_id: postId,
+    timenode: 1,       // 默认第一页
+    page_size: 20,     // 默认每页数量
+    top_comment_id: topCommentIdNum, // 传入具体的顶级评论 ID
+  };
+
+  const { code, data, msg } = await request<{ count: number }>(
+    `${API_BASE_URL}/communityview/get_sub_comment_count`,
+    payload
+  );
+
+  if (code !== 200 || typeof data?.count !== 'number') {
+    throw new Error(msg || '获取子评论总数失败');
+  }
+
+  return data.count;
+}
 
 /** 获取社群帖子列表（分页：数量 + 偏移） */
 export async function getCommunityPosts(params: CommunityListParams): Promise<Post[]> {
@@ -421,11 +510,86 @@ export async function getPostDetail(params: CommunityPostDetailParams): Promise<
   return mapBackendPostToPost(data.post);
 }
 
-/** 获取帖子评论（分页） */
-export async function getPostComments(_params: CommunityCommentsParams): Promise<Comment[]> {
-  await delay(200);
-  return [];
-}
+export const fetchCommentReplies = async (
+  token: string,
+  postId: number,
+  parentId: string,       // 要加载哪条评论的子评论
+  cursor: string | null   // 游标，第一次传 null
+) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/communityview/get_comment_tree`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: token,
+        post_id: postId,
+        timenode: cursor,         // 对应后端的 timenode
+        page_size: 10,            // 每次加载 10 条
+        top_comment_id: parentId, // 对应后端的 top_comment_id 参数
+      }),
+    });
+    const res: CommentTreeApiResponse = await response.json();
+    if (res.code === 200 && res.data) {
+      return {
+        success: true,
+        comments: res.data.comments.map(normalizeComment), // ✅ 关键：批量转换格式
+        hasMore: res.data.has_more,
+        nextCursor: res.data.next_cursor,
+      };
+    } else {
+      console.error('API Error:', res.msg);
+      return { success: false, comments: [], hasMore: false, nextCursor: null };
+    }
+  } catch (error) {
+    console.error('Network Error:', error);
+    return { success: false, comments: [], hasMore: false, nextCursor: null };
+  }
+};
+
+/**
+ * 统一上传媒体 (图片 + 视频)
+ * @param params.uris 本地 URI 列表 ['file://...', 'file://...']
+ * @param params.token 用户 Token
+ */
+export const uploadMedia = async ({ uris, token }: { uris: string[], token: string }): Promise<string[] | null> => {
+  const formData = new FormData();
+  formData.append('token', token);
+
+  uris.forEach((uri, index) => {
+    // 判断类型 (根据后缀名简单判断，或者如果你传的是对象可以直接用 type)
+    const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(uri);
+    const mimeType = isVideo ? 'video/mp4' : 'image/jpeg';
+    const fileExt = isVideo ? '.mp4' : '.jpg';
+
+    // React Native 的 FormData 添加文件需要这种格式
+    formData.append('files', {
+      uri,
+      name: `upload_${index}${fileExt}`,
+      type: mimeType,
+    } as any); // as any 是为了绕过 TS 对 FormData 的类型检查
+  });
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/communityview/upload_media`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      body: formData,
+    });
+
+    const result = await response.json();
+
+    if (result.code === 200 && result.data?.urls) {
+      return result.data.urls;
+    } else {
+      throw new Error(result.msg || "上传失败");
+    }
+  } catch (error) {
+    console.error("Upload error:", error);
+    return null;
+  }
+};
 
 /** 发布新帖（图片+视频合计最多 9 个；后端仅支持 images，视频 URL 合并到 images） */
 export async function createPost(params: CreatePostParams): Promise<Post | null> {
@@ -506,6 +670,7 @@ export async function likePost(params: LikeTargetParams): Promise<{ likes: numbe
 }
 
 /** 发表评论（顶级或回复）。仅两级：主评论 + 子评论 */
+
 export async function commentPost(params: CommentPostParams): Promise<Comment | null> {
   if (USE_MOCK) {
     await delay(300);

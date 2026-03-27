@@ -1,12 +1,12 @@
 /**
- * 社群媒体九宫格：图片+视频混合展示
+ * 社群媒体九宫格：图片 + 视频混合展示
  */
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { Play } from 'lucide-react-native';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import type { PostMediaItem } from './types';
-import { imageUri } from './utils';
+import { imageUri, videoUri } from './utils';
 import { COMMUNITY_LAYOUT, MEDIA_GRID, MAX_PREVIEW_IMAGES } from './constants';
 import { colors, borderRadius } from '../../theme/tokens';
 
@@ -39,7 +39,7 @@ function FeedVideoThumbnail({
           setThumbUri(uri);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => { c = true; };
   }, [videoUri, thumbUri]);
   return (
@@ -95,15 +95,20 @@ export function CommunityMediaGrid({
           const isVideo = item.type === 'video';
           const cellW = isSingle ? contentWidth : cellSize;
           const cellH = isSingle ? fullGridHeight : cellSize;
+
           if (isVideo) {
+            // ✅ 关键修改：计算完整的视频 URL
+            const fullVideoUri = videoUri(item.uri);
+
             return (
               <View key={`${item.uri}-${i}`} style={{ width: cellW, height: cellH }}>
                 <FeedVideoThumbnail
-                  videoUri={item.uri}
+                  videoUri={fullVideoUri} // 缩略图生成使用完整 URL
                   cellW={cellW}
                   cellH={cellH}
                   isSingle={isSingle}
-                  onPress={() => onVideoPress?.(item.uri)}
+                  // ✅ 关键修改：点击事件传递完整 URL，而不是原始 item.uri
+                  onPress={() => onVideoPress?.(fullVideoUri)}
                 />
                 {isMoreCell ? (
                   <Pressable
@@ -122,7 +127,8 @@ export function CommunityMediaGrid({
           return (
             <Pressable
               key={`${item.uri}-${i}`}
-              onPress={() => !isMoreCell && onImagePress?.(item.uri)}
+              onPress={() => !isMoreCell && onImagePress?.(imageUri(item.uri))}
+              // 注意：图片也建议统一加上 imageUri() 以防万一，虽然之前可能没问题
               style={[styles.imageGridItem, { width: cellW, height: cellH }]}
             >
               <Image source={{ uri: imageUri(item.uri) }} style={styles.imageGridImg} resizeMode="cover" />

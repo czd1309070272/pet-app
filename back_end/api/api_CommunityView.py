@@ -292,58 +292,107 @@ def build_comment_tree_paginated(post_id: str, current_user_id: str, db, top_lim
     print("Result: " + str(result))
     return result
 
-def fetch_and_build_comments(
+def fetch_and_build_comments( 
     post_id: str,
     parent_id: Optional[str],
     cursor_time: Optional[str],
     limit: int,
     is_top_level: bool = False,
-    current_user_id: str = None  # ← 新增参数
+    current_user_id: str = None,
+    root_id: Optional[str] = None,  # [新增] 用于查询整棵子树
+    replies_preview_limit: int = 10
 ) -> List[Comment]:
     """
     B站风格分页加载评论。
-    - 保留所有 content 字段（用于显示当前评论内容）
-    - 不查询 reply_to_content（因数据库无此列）
-    - replyToContent 通过 parent_id 查询父评论的 content 实现
+    - is_top_level=True: 查顶级评论 (parent_id IS NULL)
+    - root_id传入: 查该顶级评论下的所有子评论 (包括楼中楼，基于 root_id)
+    - parent_id传入 (且root_id为空): 仅查直接子评论 (基于 parent_id)
     """
     params = []
+    
+    # 1. 构建基础 WHERE 条件
     if is_top_level:
         # 查询顶级评论：有 post_id，无 parent_id
         base_query = """
-            SELECT id, user_id, parent_id, reply_to_uid, content, created_at, likes_count, root_id
-            FROM comments 
-            WHERE post_id = %s AND parent_id IS NULL
+        SELECT id, user_id, parent_id, reply_to_uid, content, created_at, likes_count, root_id
+        FROM comments 
+        WHERE post_id = %s AND parent_id IS NULL
         """
         params = [post_id]
     else:
-        # 查询子评论：必须同时指定 post_id 和 parent_id（安全且准确）
-        base_query = """
+        # 查询子评论
+        if root_id:
+            # [核心修改] 如果传了 root_id，查询该树下所有后代评论
+            # 逻辑：root_id 匹配 AND 排除掉顶级评论自己 (id != root_id)
+            base_query = """
             SELECT id, user_id, parent_id, reply_to_uid, content, created_at, likes_count, root_id
             FROM comments 
-            WHERE post_id = %s AND parent_id = %s
-        """
-        params = [post_id, parent_id]
+            WHERE post_id = %s AND root_id = %s AND id != %s
+            """
+            params = [post_id, root_id, root_id]
+        elif parent_id:
+            # 旧逻辑：只查直接子节点
+            base_query = """
+            SELECT id, user_id, parent_id, reply_to_uid, content, created_at, likes_count, root_id
+            FROM comments 
+            WHERE post_id = %s AND root_id = %s
+            """
+            params = [post_id, parent_id]
+        else:
+            # 既不是顶级，也没给 parent_id 或 root_id，无法查询
+            return []
 
-    # 游标分页：加载比 cursor_time 更早的评论（B站风格）
+    # 2. 游标分页：加载比 cursor_time 更早的评论（B站风格）
     if cursor_time:
         base_query += " AND created_at < %s"
         params.append(cursor_time)
-
+    
+    # 3. 排序与限制
     base_query += " ORDER BY created_at DESC LIMIT %s"
     params.append(limit)
-
+    
     comments = db.query_all(base_query, tuple(params))
     if not comments:
         return []
+    
+    # 4. 如果是顶级评论列表，需要预加载子评论 (仅当 is_top_level 为 True 时)
+    # 注意：如果通过 root_id 查询子评论，不需要再在这里预加载，因为查出来的就是所有子评论
+    reply_rows = []
+    reply_map = {}
+    
+    if is_top_level:
+        top_ids = [c["id"] for c in comments]
+        if top_ids:
+            placeholders = ",".join(["%s"] * len(top_ids))
+            # 每个 parent_id 只取前 N 条子评论（按时间倒序）- 这里依然用 parent_id 查直接子节点作为预览
+            # 如果你的需求是顶级列表页也要显示所有楼中楼，这里也需要改成 root_id 逻辑
+            # 但通常列表页只显示直接回复。这里保持原逻辑不变，仅修改下方的主查询逻辑。
+            sql = f"""
+            SELECT *
+            FROM (
+            SELECT id, user_id, parent_id, reply_to_uid, content, created_at, likes_count, root_id,
+            ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY created_at DESC) AS rn
+            FROM comments
+            WHERE post_id = %s AND parent_id IN ({placeholders})
+            ) t
+            WHERE t.rn <= %s
+            ORDER BY t.parent_id, t.created_at DESC
+            """
+            reply_rows = db.query_all(sql, tuple([post_id] + top_ids + [replies_preview_limit]))
+            
+            reply_map = {}
+            for r in reply_rows:
+                reply_map.setdefault(r["parent_id"], []).append(r)
 
     # === 批量收集依赖数据 ===
     user_ids = set()
-    parent_comment_ids = set()  # 用于获取 replyToContent
-    all_comment_ids = set()  # ← 新增
-
-    for cmt in comments:
+    parent_comment_ids = set() # 用于获取 replyToContent
+    all_comment_ids = set()
+    
+    all_rows = comments + (reply_rows if is_top_level else [])
+    for cmt in all_rows:
         user_ids.add(cmt["user_id"])
-        all_comment_ids.add(cmt["id"])  # ← 收集 ID
+        all_comment_ids.add(cmt["id"])
         if cmt["reply_to_uid"]:
             user_ids.add(cmt["reply_to_uid"])
         if cmt["parent_id"] is not None:
@@ -360,7 +409,7 @@ def fetch_and_build_comments(
         user_map = {u["id"]: u for u in users}
 
     # 批量查父评论的 content（即被回复的内容）
-    parent_content_map = {}  # id -> content
+    parent_content_map = {} # id -> content
     if parent_comment_ids:
         placeholders = ','.join(['%s'] * len(parent_comment_ids))
         parent_rows = db.query_all(
@@ -378,6 +427,7 @@ def fetch_and_build_comments(
             [current_user_id] + list(all_comment_ids)
         )
         liked_comment_ids = {row["target_id"] for row in liked_rows}
+
     # === 构建 Comment 对象 ===
     def make_comment_obj(cmt_row):
         author = user_map.get(cmt_row["user_id"], {})
@@ -387,11 +437,14 @@ def fetch_and_build_comments(
             replied_user = user_map.get(cmt_row["reply_to_uid"])
             if replied_user:
                 reply_to_name = replied_user.get("username", "")
+        
         reply_to_content = ""
         if cmt_row["parent_id"] is not None:
             reply_to_content = parent_content_map.get(str(cmt_row["parent_id"]), "")
+        
         # ✅ 判断是否点赞
         is_liked = str(cmt_row["id"]) in liked_comment_ids or cmt_row["id"] in liked_comment_ids
+        
         return Comment(
             id=str(cmt_row["id"]),
             author=author.get("username", "未知用户"),
@@ -399,16 +452,28 @@ def fetch_and_build_comments(
             content=own_content,
             time=cmt_row["created_at"].strftime('%Y-%m-%d %H:%M:%S') if cmt_row["created_at"] else "未知时间",
             likes=cmt_row.get("likes_count", 0),
-            isLiked=is_liked,  # ✅
+            isLiked=is_liked,
             isVIP=author.get("vip_level") != "NONE",
             vipLevel=author.get("vip_level", "NONE"),
             replyToName=reply_to_name,
-            replies=[],
+            replies=[], # 默认空，如果是顶级评论会在下方填充
             replyToContent=reply_to_content,
             top_comment_id=cmt_row.get("root_id") or cmt_row["id"]
         )
 
-    return [make_comment_obj(c) for c in comments]
+    # 如果是查询子评论模式 (通过 root_id 或 parent_id)，直接返回扁平列表
+    if not is_top_level:
+        return [make_comment_obj(c) for c in comments]
+
+    # 如果是顶级评论模式，需要组装 replies
+    result = []
+    for top in comments:
+        top_obj = make_comment_obj(top)
+        subs = reply_map.get(top["id"], [])
+        top_obj.replies = [make_comment_obj(s) for s in subs]
+        result.append(top_obj)
+    
+    return result
 
 # 创建一个测试的api（无需 token）
 @router.get("/api/communityview/test", response_model=JsonTool)
@@ -527,117 +592,217 @@ async def upload_videos(token: str = Form(...), videos: List[UploadFile] = File(
 # ========================
 # 以下接口全部加入 token 验证
 # ========================
+@router.post("/api/communityview/upload_media", response_model=JsonTool)
+async def upload_media(token: str = Form(...), files: List[UploadFile] = File(...)):
+    uploaded_files_paths = []
+    try:
+        # --- 1. 鉴权 ---
+        decoded = decode_token_for_auth(token)
+        user_id = decoded["user_id"]
+        
+        db_user = db.query_one("SELECT id, token_version FROM users WHERE id = %s", (user_id,))
+        if not db_user or db_user.get("token_version") != decoded["token_version"]:
+            return JsonTool(code=401, msg="登录状态已过期", data=None)
 
-# 发布新社区信息
+        # --- 2. 准备目录 (🔴 关键修改：与 main.py 保持一致) ---
+        # main.py 中定义的是: IMAGE_DIR = "back_end/pet_images"
+        # 我们直接使用相对项目根目录的路径，确保 FastAPI 静态服务能读到
+        img_dir = Path("back_end/pet_images")
+        vid_dir = Path("back_end/pet_videos")
+        
+        # 确保目录存在 (双重保险)
+        img_dir.mkdir(parents=True, exist_ok=True)
+        vid_dir.mkdir(parents=True, exist_ok=True)
+
+        result_urls = []
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+
+        # --- 3. 循环处理文件 ---
+        for index, file in enumerate(files):
+            if not file.filename:
+                continue
+            
+            # A. 获取扩展名
+            original_ext = os.path.splitext(file.filename)[1].lower()
+            
+            # B. 判断类型
+            content_type = file.content_type or ""
+            is_video = content_type.startswith("video/") or original_ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv']
+            
+            # C. 确定存储路径和 URL 前缀 (🔴 关键修改：URL 前缀必须包含 /api/)
+            if is_video:
+                save_dir = vid_dir
+                # main.py: app.mount("/api/videos", ...) -> 所以前缀是 /api/videos
+                url_prefix = "/videos"
+                if original_ext not in ['.mp4', '.mov', '.avi', '.webm', '.mkv']:
+                    original_ext = '.mp4' 
+            else:
+                save_dir = img_dir
+                # main.py: app.mount("/api/images", ...) -> 所以前缀是 /api/images
+                url_prefix = "/images"
+                if original_ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                    original_ext = '.jpg'
+
+            # D. 生成唯一文件名
+            unique_filename = f"{user_id}_{timestamp}_{index}_{str(uuid.uuid4())[:8]}{original_ext}"
+            file_path = save_dir / unique_filename
+
+            # E. 写入磁盘
+            content = await file.read()
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+            
+            uploaded_files_paths.append(str(file_path))
+            
+            # 构建完整 URL: 例如 "/api/images/user_123_xxx.jpg"
+            # 前端请求时：http://ip:8000/api/images/user_123_xxx.jpg -> 能被 main.py 正确拦截并返回文件
+            result_urls.append(f"{url_prefix}/{unique_filename}")
+
+        return JsonTool(code=200, msg="上传成功", data={"urls": result_urls})
+
+    except Exception as e:
+        traceback.print_exc()
+        # --- 失败回滚：删除所有已上传的文件 ---
+        for f_path in uploaded_files_paths:
+            try:
+                if os.path.exists(f_path):
+                    os.remove(f_path)
+                    print(f"Cleanup: Removed {f_path}")
+            except Exception as clean_err:
+                print(f"Cleanup failed for {f_path}: {clean_err}")
+        
+        return JsonTool(code=500, msg=f"上传失败：{str(e)}", data=None)
+        
+def _cleanup_uploaded_files(image_urls: List[str]):
+    """
+    辅助函数：根据 URL 列表删除本地文件
+    """
+    if not image_urls:
+        return
+    
+    current_dir = Path(__file__).parent.parent
+    video_dir = current_dir / "pet_videos"
+    image_dir = current_dir / "pet_images"
+
+    print(f"🧹 开始清理 {len(image_urls)} 个上传的文件...")
+    
+    for url in image_urls:
+        if not url:
+            continue
+            
+        filename = url.split('/')[-1]
+        if not filename:
+            continue
+
+        file_path = None
+        # 根据 URL 前缀或后缀判断路径
+        if url.startswith('/videos/') or any(filename.endswith(ext) for ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv']):
+            file_path = video_dir / filename
+        elif url.startswith('/images/') or any(filename.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+            file_path = image_dir / filename
+        
+        if file_path and file_path.exists():
+            try:
+                os.remove(file_path)
+                print(f"✅ 已删除文件: {file_path}")
+            except Exception as e:
+                print(f"❌ 删除文件失败 {file_path}: {e}")
+
 @router.post("/api/communityview/add_new_community", response_model=JsonTool)
 async def add_community(request_data: CommunityRequest):
+    images = request_data.images or [] # 提前获取，方便异常时使用
+    
     try:
+        # --- 1. 鉴权 ---
         token = request_data.token
         decoded = decode_token_for_auth(token)
         user_id = decoded["user_id"]
         claimed_token_version = decoded["token_version"]
 
-        db_user = db.query_one("SELECT id, token_version FROM users WHERE id = %s", (user_id,))
+        db_user = db.query_one("SELECT id, token_version,nickname,avatar_url FROM users WHERE id = %s", (user_id,))
         if not db_user:
+            print("⚠️ 用户不存在，清理文件")
+            _cleanup_uploaded_files(images)
             return JsonTool(code=401, msg="用户不存在", data=None)
+        
+        print(f"✅ db_user: {db_user}")
+
         current_token_version = db_user.get("token_version") or 0
         if claimed_token_version != current_token_version:
+            print("⚠️ Token 版本过期，清理文件")
+            _cleanup_uploaded_files(images)
             return JsonTool(code=401, msg="登录状态已过期，请重新登录", data=None)
 
+        # 获取完整用户信息用于返回
+        user = db_user # 上面已经查过了，直接用，或者再查一次也行，这里复用 db_user
+
         content = request_data.content
-        images = request_data.images or []
         tags = request_data.tags or []
 
-        print(f"接收到的社区帖子数据: user_id={user_id}, content={content}, images={images}, tags={tags}")
+        print(f"📝 接收发帖: user_id={user_id}, 内容长度={len(content)}, 媒体数={len(images)}")
 
-        sql = "select * from users where id = %s"
-        print(f"正在查询用户信息，user_id: {user_id}")
-        user = db.query_one(sql, (user_id,))
-        print(f"查询到的用户信息: {user}")
-
-        if not user:
-            print("用户不存在")
-            for img_url in images:
-                filename = img_url.split('/')[-1]
-                if any(img_url.endswith(ext) for ext in ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.wmv', '.flv', '.mkv']):
-                    video_path = Path(__file__).parent.parent / "pet_videos" / filename
-                    if video_path.exists():
-                        os.remove(video_path)
-                        print(f"已删除视频文件: {filename}")
-                elif any(img_url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']):
-                    image_path = Path(__file__).parent.parent / "pet_images" / filename
-                    if image_path.exists():
-                        os.remove(image_path)
-                        print(f"已删除图片文件: {filename}")
-            return JsonTool(code=201, msg="用户不存在", data=None)
-
-        print("用户存在，继续处理")
+        # --- 2. 插入帖子 ---
         datatime = datetime.now()
-        print(f"准备插入帖子数据，时间: {datatime}")
         insert_new_post_sql = "INSERT INTO posts (user_id, content, full_content, created_at) VALUES (%s, %s, %s, %s)"
-        result = db.execute(insert_new_post_sql, (user_id, content, content, datatime))
-        print(f"帖子插入结果: {result}")
+        
+        # ✅ 关键修改：直接使用 insert_and_get_id 的返回值，这是最安全的 ID 获取方式
+        # 你的 db.py 中该方法返回的是 int (lastrowid)
+        post_id = db.insert_and_get_id(insert_new_post_sql, (user_id, content, content, datatime))
+        
+        if not post_id:
+            print("❌ 插入帖子失败，清理文件")
+            _cleanup_uploaded_files(images)
+            return JsonTool(code=500, msg="数据库写入帖子失败", data=None)
 
-        search_post_id_sql = "SELECT id FROM posts WHERE user_id = %s ORDER BY created_at DESC LIMIT 1"
-        post_id = db.query_one(search_post_id_sql, (user_id,))
-        print(f"获取到的帖子ID: {post_id}")
-
-        if not post_id or len(post_id) == 0:
-            print("无法获取新插入的帖子ID")
-            return JsonTool(code=500, msg="无法获取帖子ID", data=None)
-
-        print(f"开始处理图片，图片数量: {len(images)}")
-        img_sort_order = 0
-        for img_url in images:
-            print(f"正在插入图片: {img_url}，排序: {img_sort_order}")
+        # --- 3. 插入媒体 ---
+        for idx, img_url in enumerate(images):
             insert_post_image_sql = "INSERT INTO post_images (post_id, image_url, sort_order) VALUES (%s, %s, %s)"
-            db.execute(insert_post_image_sql, (post_id['id'], img_url, img_sort_order))
-            img_sort_order += 1
-            print(f"图片插入完成，当前排序: {img_sort_order}")
+            success = db.execute(insert_post_image_sql, (post_id, img_url, idx))
+            if not success:
+                # 如果某张图片插入失败，视为整体失败
+                raise Exception(f"插入第 {idx} 张图片失败")
 
-        print(f"开始处理标签，标签数量: {len(tags)}")
+        # --- 4. 插入标签 ---
         for tag in tags:
-            print(f"正在插入标签: {tag}")
             insert_post_tag_sql = "INSERT INTO post_tags (post_id, tag_name) VALUES (%s, %s)"
-            db.execute(insert_post_tag_sql, (post_id['id'], tag))
-            print(f"标签插入完成: {tag}")
+            db.execute(insert_post_tag_sql, (post_id, tag))
 
-        isVIP = False if user.get('vip_level') == "NONE" else True
-        print(f"用户VIP状态: {isVIP}")
+        # --- 5. 构建成功响应 ---
+        is_vip = user.get('vip_level') != "NONE"
+        
+        response_data = {
+            "post": newPost(
+                author=user.get('nickname', 'Unknown'),
+                avatar=user.get('avatar_url', '') or '/default-avatar.png',
+                id=post_id, # 直接使用刚才获得的 ID
+                time=datatime.strftime('%Y-%m-%d %H:%M:%S'),
+                content=content,
+                fullContent=content,
+                images=images,
+                likes=0,
+                comments=0,
+                isLiked=False,
+                isV=is_vip,
+                isVIP=is_vip,
+                vipLevel=user.get('vip_level', ''),
+                userTags=tags,
+                commentList=[],
+                Level=user.get('level', 0)
+            ).dict()
+        }
 
-        print("准备返回成功响应")
-        response = JsonTool(
-            code=200,
-            msg="社区帖子发布成功",
-            data={
-                "post": newPost(
-                    author=user.get('username') if user and len(user) > 0 else 'Unknown',
-                    avatar=user.get('avatar_url', '') if user and len(user) > 0 and user.get('avatar_url') else '/default-avatar.png',
-                    id=post_id['id'],
-                    time=datatime.strftime('%Y-%m-%d %H:%M:%S'),
-                    content=content,
-                    fullContent=content,
-                    images=images,
-                    likes=0,
-                    comments=0,
-                    isLiked=False,
-                    isV=isVIP,
-                    isVIP=isVIP,
-                    vipLevel=user.get('vip_level', '') if user and len(user) > 0 else '',
-                    userTags=tags,
-                    commentList=[],
-                    Level=user.get('level', 0) if user and len(user) > 0 else 0
-                ).dict()
-            }
-        )
-        print("响应构建完成，准备返回")
-        return response
+        return JsonTool(code=200, msg="发布成功", data=response_data)
 
     except Exception as e:
         traceback.print_exc()
-        return JsonTool(code=500, msg=f"发布失败: {str(e)}", data=None)
-
-
+        print(f"💥 发生异常：{str(e)}")
+        print("⚠️ 触发异常清理流程")
+        
+        # ✅ 关键修改：任何异常发生时，都尝试删除已上传的文件
+        _cleanup_uploaded_files(images)
+        
+        return JsonTool(code=500, msg=f"发布失败：{str(e)}", data=None)
+    
 # 获取社区帖子
 @router.post("/api/communityview/get_community_posts", response_model=JsonTool)
 async def get_community_posts(request_data: CommunityRequestComment):
@@ -740,6 +905,7 @@ async def get_community_posts(request_data: CommunityRequestComment):
 @router.post("/api/communityview/get_community_posts_by_time", response_model=JsonTool)
 async def get_community_posts_by_time(request_data: CommunityRequestComment2):
     try:
+        # --- 1. 鉴权逻辑 (保持不变) ---
         token = request_data.token
         decoded = decode_token_for_auth(token)
         user_id = decoded["user_id"]
@@ -748,10 +914,12 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
         db_user = db.query_one("SELECT id, token_version FROM users WHERE id = %s", (user_id,))
         if not db_user:
             return JsonTool(code=401, msg="用户不存在", data=None)
+        
         current_token_version = db_user.get("token_version") or 0
         if claimed_token_version != current_token_version:
             return JsonTool(code=401, msg="登录状态已过期，请重新登录", data=None)
 
+        # --- 2. 参数解析 ---
         limit = request_data.limit
         timenode = request_data.timenode
         exclude_post_ids = request_data.exclude_post_ids or []
@@ -760,23 +928,32 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
         if limit <= 0:
             return JsonTool(code=400, msg="请求参数无效", data=None)
 
-        if not db.query_one("SELECT 1 FROM users WHERE id = %s", (user_id,)):
-            return JsonTool(code=400, msg="用户不存在", data=None)
-
+        # --- 3. 构建帖子查询 SQL (核心修改部分) ---
         posts_query = "SELECT * FROM posts WHERE 1=1"
         params = []
+        
         if exclude_post_ids:
             placeholders = ','.join(['%s'] * len(exclude_post_ids))
             posts_query += f" AND id NOT IN ({placeholders})"
             params.extend(exclude_post_ids)
 
         if timenode:
+            # 🚀 关键修改：无论 newer 还是 older，统统使用 DESC (新->旧)
+            # 这样前端拿到数据后，永远不需要 reverse()
             if datatype == "newer":
-                posts_query += " AND created_at > %s ORDER BY created_at ASC"
+                # 原逻辑是 ASC，现改为 DESC
+                # 场景：下拉刷新，查比 timenode 更新的数据，按时间倒序排列
+                # 结果：[最新的新帖子, ..., 较新的新帖子]
+                posts_query += " AND created_at > %s ORDER BY created_at DESC"
             else:
+                # 场景：加载更多，查比 timenode 更旧的数据，按时间倒序排列
+                # 结果：[较新的旧帖子, ..., 最旧的旧帖子]
                 posts_query += " AND created_at < %s ORDER BY created_at DESC"
+            
             params.append(timenode)
         else:
+            # 场景：首次加载 (timenode 为空)
+            # 直接查最新的 N 条，按时间倒序
             posts_query += " ORDER BY created_at DESC"
 
         posts_query += " LIMIT %s"
@@ -786,31 +963,45 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
         if not posts:
             return JsonTool(code=200, msg="无更多帖子", data={"posts": []})
 
+        # --- 4. 批量预加载关联数据 (保持不变) ---
         post_ids = [p["id"] for p in posts]
         author_ids = {p["user_id"] for p in posts}
 
-        # 批量查询关联数据（略，保持原逻辑）
+        # 4.1 图片/视频资源
         image_map = {}
         if post_ids:
             images = db.query_all("""
-                SELECT post_id, image_url FROM post_images WHERE post_id IN ({}) ORDER BY post_id, sort_order
+                SELECT post_id, image_url FROM post_images 
+                WHERE post_id IN ({}) 
+                ORDER BY sort_order ASC
             """.format(','.join(['%s'] * len(post_ids))), post_ids)
+            
             for img in images:
-                image_map.setdefault(img["post_id"], []).append(img["image_url"])
+                pid = img["post_id"]
+                if pid not in image_map:
+                    image_map[pid] = []
+                image_map[pid].append(img["image_url"])
 
+        # 4.2 标签
         tag_map = {}
         if post_ids:
             tags = db.query_all("""
                 SELECT post_id, tag_name FROM post_tags WHERE post_id IN ({})
             """.format(','.join(['%s'] * len(post_ids))), post_ids)
             for tag in tags:
-                tag_map.setdefault(tag["post_id"], []).append(tag["tag_name"])
+                pid = tag["post_id"]
+                if pid not in tag_map:
+                    tag_map[pid] = []
+                tag_map[pid].append(tag["tag_name"])
 
+        # 4.3 点赞信息
         like_map = {}
         if post_ids:
             likes = db.query_all("""
-                SELECT target_id AS post_id, user_id FROM user_likes WHERE target_type = 'POST' AND target_id IN ({})
+                SELECT target_id AS post_id, user_id FROM user_likes 
+                WHERE target_type = 'POST' AND target_id IN ({})
             """.format(','.join(['%s'] * len(post_ids))), post_ids)
+            
             for like in likes:
                 pid = like["post_id"]
                 if pid not in like_map:
@@ -819,6 +1010,7 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
                 if like["user_id"] == user_id:
                     like_map[pid]["is_liked"] = True
 
+        # 4.4 作者信息
         author_map = {}
         if author_ids:
             authors = db.query_all("""
@@ -827,6 +1019,7 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
             for au in authors:
                 author_map[au["id"]] = au
 
+        # 4.5 评论总数
         comment_count_map = {}
         if post_ids:
             counts = db.query_all("""
@@ -835,8 +1028,10 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
             for c in counts:
                 comment_count_map[c["post_id"]] = c["cnt"]
 
+        # 4.6 最新评论列表
         recent_comments_map = {}
         all_comment_user_ids = set()
+        
         if post_ids:
             comments = db.query_all("""
                 SELECT c1.id, c1.post_id, c1.user_id, c1.reply_to_uid, c1.content, c1.created_at, c1.likes_count
@@ -847,15 +1042,18 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
                 ) <= 3
                 ORDER BY c1.post_id, c1.created_at DESC
             """.format(','.join(['%s'] * len(post_ids))), post_ids)
+            
             for cmt in comments:
-                post_id = cmt["post_id"]
-                recent_comments_map.setdefault(post_id, []).append(cmt)
+                pid = cmt["post_id"]
+                if pid not in recent_comments_map:
+                    recent_comments_map[pid] = []
+                recent_comments_map[pid].append(cmt)
+                
                 all_comment_user_ids.add(cmt["user_id"])
                 if cmt["reply_to_uid"]:
                     all_comment_user_ids.add(cmt["reply_to_uid"])
-            for pid in recent_comments_map:
-                recent_comments_map[pid].sort(key=lambda x: x["created_at"], reverse=True)
 
+        # 4.7 评论相关的用户信息
         user_map = {}
         if all_comment_user_ids:
             users = db.query_all("""
@@ -863,14 +1061,18 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
             """.format(','.join(['%s'] * len(all_comment_user_ids))), list(all_comment_user_ids))
             user_map = {u["id"]: u for u in users}
 
+        # --- 5. 组装最终数据 (保持不变) ---
         post_list = []
+        
         for post in posts:
             post_id = post["id"]
             author_id = post["user_id"]
-            image_urls = image_map.get(post_id, [])
+            
+            media_urls = image_map.get(post_id, [])
             tag_names = tag_map.get(post_id, [])
             like_info = like_map.get(post_id, {"count": 0, "is_liked": False})
             total_comment_count = comment_count_map.get(post_id, 0)
+            
             author_info = author_map.get(author_id, {
                 "nickname": "未知用户",
                 "avatar_url": "/default-avatar.png",
@@ -880,56 +1082,55 @@ async def get_community_posts_by_time(request_data: CommunityRequestComment2):
 
             comment_objs = []
             for cmt in recent_comments_map.get(post_id, []):
-                author = user_map.get(cmt["user_id"], {})
+                c_author = user_map.get(cmt["user_id"], {})
                 reply_to_name = ""
+                
                 if cmt["reply_to_uid"]:
                     replied_user = user_map.get(cmt["reply_to_uid"])
                     if replied_user:
                         reply_to_name = replied_user.get("username", "")
-                is_liked = False
-                comment_objs.append(
-                    Comment(
-                        id=str(cmt["id"]),
-                        author=author.get("username", "未知用户"),
-                        avatar=author.get("avatar_url") or "/default-avatar.png",
-                        content=cmt["content"],
-                        time=cmt["created_at"].strftime('%Y-%m-%d %H:%M:%S'),
-                        likes=cmt.get("likes_count", 0),
-                        isLiked=is_liked,
-                        isVIP=author.get("vip_level") != "NONE",
-                        vipLevel=author.get("vip_level", "NONE"),
-                        replyToName=reply_to_name,
-                        replies=[],
-                        replyToContent="",
-                    )
-                )
+                
+                comment_objs.append({
+                    "id": str(cmt["id"]),
+                    "author": c_author.get("username", "未知用户"),
+                    "avatar": c_author.get("avatar_url") or "/default-avatar.png",
+                    "content": cmt["content"],
+                    "time": cmt["created_at"].strftime('%Y-%m-%d %H:%M:%S') if cmt.get("created_at") else "",
+                    "likes": cmt.get("likes_count", 0),
+                    "isLiked": False,
+                    "isVIP": c_author.get("vip_level", "NONE") != "NONE",
+                    "vipLevel": c_author.get("vip_level", "NONE"),
+                    "replyToName": reply_to_name,
+                    "replies": [],
+                    "replyToContent": ""
+                })
 
-            post_list.append(
-                newPost(
-                    author=author_info.get('nickname'),
-                    avatar=author_info.get('avatar_url') or "/default-avatar.png",
-                    id=post_id,
-                    time=post["created_at"].strftime('%Y-%m-%d %H:%M:%S') if post.get("created_at") else "未知时间",
-                    content=post.get('content', ''),
-                    fullContent=post.get('content', ''),
-                    images=image_urls,
-                    likes=like_info["count"],
-                    comments=total_comment_count,
-                    isLiked=like_info["is_liked"],
-                    isV=is_vip,
-                    isVIP=is_vip,
-                    vipLevel=author_info.get('vip_level', 'NONE'),
-                    userTags=tag_names,
-                    commentList=comment_objs,
-                ).dict()
-            )
+            post_data = {
+                "id": post_id,
+                "author": author_info.get('nickname', '未知用户'),
+                "avatar": author_info.get('avatar_url') or "/default-avatar.png",
+                "time": post["created_at"].strftime('%Y-%m-%d %H:%M:%S') if post.get("created_at") else "未知时间",
+                "content": post.get('content', ''),
+                "fullContent": post.get('content', ''),
+                "images": media_urls,
+                "likes": like_info["count"],
+                "comments": total_comment_count,
+                "isLiked": like_info["is_liked"],
+                "isV": is_vip,
+                "isVIP": is_vip,
+                "vipLevel": author_info.get('vip_level', 'NONE'),
+                "userTags": tag_names,
+                "commentList": comment_objs
+            }
+            
+            post_list.append(post_data)
 
         return JsonTool(code=200, msg="获取帖子成功", data={"posts": post_list})
 
     except Exception as e:
+        import traceback
         traceback.print_exc()
         return JsonTool(code=500, msg=f"获取帖子失败: {str(e)}", data=None)
-
 
 # 点赞
 @router.post("/api/communityview/like_post", response_model=JsonTool)
@@ -1242,12 +1443,155 @@ async def get_post_detail(request_data: CommunityDetail):
 # 获取评论树（用于懒加载）
 @router.post("/api/communityview/get_comment_tree", response_model=JsonTool)
 async def get_comment_tree(request_data: CommunityCommentRequest):
+    print("=" * 40)
+    print(f"[API] >>> 开始处理请求：get_comment_tree")
+    
     try:
+        # 1. 鉴权部分 (保持不变)
+        token = request_data.token
+        token_preview = f"{token[:15]}..." if len(token) > 15 else token
+        print(f"[Auth] 接收到 Token: {token_preview}")
+        
+        decoded = decode_token_for_auth(token)
+        user_id = decoded["user_id"]
+        claimed_token_version = decoded["token_version"]
+        
+        db_user = db.query_one("SELECT id, token_version FROM users WHERE id = %s", (user_id,))
+        if not db_user:
+            return JsonTool(code=401, msg="用户不存在", data=None)
+        
+        current_token_version = db_user.get("token_version") or 0
+        if claimed_token_version != current_token_version:
+            return JsonTool(code=401, msg="登录状态已过期，请重新登录", data=None)
+        
+        print(f"[Auth] ✅ 鉴权通过")
+        
+        # 2. 参数提取
+        post_id = request_data.post_id
+        page_size = min(50, max(1, request_data.page_size)) # 限制最大数量
+        top_comment_id = request_data.top_comment_id
+        cursor_time = request_data.timenode
+        
+        print(f"[Params] PostID: {post_id}, TopCommentID: {top_comment_id}, PageSize: {page_size}, Cursor: {cursor_time}")
+        
+        # 二次验证用户
+        if not db.query_one("SELECT 1 FROM users WHERE id = %s", (user_id,)):
+            return JsonTool(code=400, msg="用户不存在", data=None)
+        
+        # 3. 核心逻辑分支
+        actual_post_id = None
+        
+        # --- 分支 A: 获取顶级评论列表 (以及它们的所有子评论) ---
+        if top_comment_id is None:
+            print(f"[Logic] 模式：获取顶级评论列表 + 预加载子评论 (含楼中楼)")
+            
+            # 验证帖子存在
+            if not db.query_one("SELECT 1 FROM posts WHERE id = %s", (post_id,)):
+                return JsonTool(code=404, msg="帖子不存在", data=None)
+            
+            actual_post_id = str(post_id)
+            
+            # 1. 先查顶级评论
+            top_comments = fetch_and_build_comments(
+                post_id=actual_post_id,
+                parent_id=None,
+                root_id=None,      # 查顶级不需要 root_id
+                cursor_time=cursor_time,
+                limit=page_size,
+                is_top_level=True,
+                current_user_id=user_id
+            )
+            print(f"[DB] 查询到 {len(top_comments)} 条顶级评论")
+            
+            # 🔴 关键新增：如果查到了顶级评论，且需要预加载子评论
+            if top_comments:
+                print(f"[Logic] 正在批量预加载这 {len(top_comments)} 条顶级评论的【所有】子评论...")
+                
+                for top_cmt in top_comments:
+                    # ⚠️ 核心修改：传入 root_id 而不是 parent_id
+                    # 这样 fetch_and_build_comments 会查询 root_id = top_cmt.id 的所有记录
+                    # 包括直接回复顶级的，以及回复子评论的 (楼中楼)
+                    sub_comments = fetch_and_build_comments(
+                        post_id=actual_post_id,
+                        parent_id=None,       # 不需要 parent_id
+                        root_id=top_cmt.id,   # <--- 关键：传入顶级评论 ID 作为 root_id
+                        cursor_time=None,     # 预加载不需要游标，从头开始查最新的
+                        limit=page_size,      # 每个顶级评论预加载 page_size 条 (总共)
+                        is_top_level=False,
+                        current_user_id=user_id
+                    )
+                    
+                    # 赋值给 replies
+                    top_cmt.replies = sub_comments
+                    
+                    if sub_comments:
+                        print(f" - 评论 {top_cmt.id} 预加载了 {len(sub_comments)} 条子评论 (含楼中楼)")
+            
+            comment_objects = top_comments
+            has_more = len(comment_objects) == page_size
+            next_cursor = comment_objects[-1].time if comment_objects else None
+            
+        # --- 分支 B: 获取特定评论的子评论列表 (懒加载/分页) ---
+        else:
+            print(f"[Logic] 模式：获取特定评论 ({top_comment_id}) 的子评论列表")
+            
+            # 强制转为字符串用于后续查询
+            query_parent_id = str(top_comment_id)
+            
+            # 反查 post_id (确保安全性，防止跨帖子查询)
+            comment_info = db.query_one(
+                "SELECT post_id FROM comments WHERE id = %s",
+                (top_comment_id,) 
+            )
+            
+            if not comment_info:
+                return JsonTool(code=404, msg="评论不存在", data=None)
+            
+            actual_post_id = str(comment_info["post_id"])
+            
+            # 查子评论
+            # 注意：这里通常还是查直接子节点 (parent_id)，除非你的前端逻辑是“加载更多该树下的剩余评论”
+            # 如果你的需求是“加载更多”也是基于 root_id 的分页，这里也需要传 root_id。
+            # 但通常“展开更多”是针对当前层级的。这里保持原有逻辑 (parent_id)。
+            comment_objects = fetch_and_build_comments(
+                post_id=actual_post_id,
+                parent_id=query_parent_id,
+                root_id=None,       # 分页加载通常基于 parent_id
+                cursor_time=cursor_time,
+                limit=page_size,
+                is_top_level=False,
+                current_user_id=user_id
+            )
+            
+            has_more = len(comment_objects) == page_size
+            next_cursor = comment_objects[-1].time if comment_objects else None
+        
+        print(f"[Response] 最终返回评论数: {len(comment_objects)}, has_more: {has_more}")
+        
+        # 4. 构建返回
+        response_data = {
+            "comments": [c.dict() for c in comment_objects],
+            "has_more": has_more,
+            "next_cursor": next_cursor
+        }
+        
+        return JsonTool(code=200, msg="成功", data=response_data)
+        
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] {str(e)}\n{traceback.format_exc()}")
+        return JsonTool(code=500, msg=f"服务器错误: {str(e)}", data=None)
+
+# 获取帖子的顶级评论总数
+@router.post("/api/communityview/get_top_comment_count", response_model=JsonTool)
+async def get_top_comment_count(request_data: CommunityCommentRequest):
+    try:
+        # 1. 鉴权 (参考其他接口)
         token = request_data.token
         decoded = decode_token_for_auth(token)
         user_id = decoded["user_id"]
         claimed_token_version = decoded["token_version"]
-
+        
         db_user = db.query_one("SELECT id, token_version FROM users WHERE id = %s", (user_id,))
         if not db_user:
             return JsonTool(code=401, msg="用户不存在", data=None)
@@ -1256,69 +1600,86 @@ async def get_comment_tree(request_data: CommunityCommentRequest):
             return JsonTool(code=401, msg="登录状态已过期，请重新登录", data=None)
 
         post_id = request_data.post_id
-        page_size = min(50, max(1, request_data.page_size))
-        top_comment_id = request_data.top_comment_id
-        cursor_time = request_data.timenode
+        
+        # 2. 验证帖子是否存在
+        if not db.query_one("SELECT 1 FROM posts WHERE id = %s", (post_id,)):
+            return JsonTool(code=404, msg="帖子不存在", data=None)
 
-        print(f"获取评论树 - 帖子ID: {post_id}, 父评论ID: {top_comment_id}, 游标时间: {cursor_time}")
-
-        # 验证用户
-        if not db.query_one("SELECT 1 FROM users WHERE id = %s", (user_id,)):
-            return JsonTool(code=400, msg="用户不存在", data=None)
-
-        # 如果是查顶级评论，验证帖子
-        if top_comment_id is None:
-            if not db.query_one("SELECT 1 FROM posts WHERE id = %s", (post_id,)):
-                return JsonTool(code=404, msg="帖子不存在", data=None)
-            actual_post_id = post_id
-        else:
-            # 🔥 关键修复：通过 top_comment_id 反查 post_id（确保安全）
-            comment_info = db.query_one(
-                "SELECT post_id FROM comments WHERE id = %s AND parent_id IS NULL",
-                (top_comment_id,)
-            )
-            if not comment_info:
-                return JsonTool(code=404, msg="顶级评论不存在", data=None)
-            actual_post_id = str(comment_info["post_id"])
-
-        # 调用辅助函数
-        if top_comment_id is None:
-            comment_objects = fetch_and_build_comments(
-                post_id=actual_post_id,
-                parent_id=None,
-                cursor_time=cursor_time,
-                limit=page_size,
-                is_top_level=True,
-                current_user_id=user_id  # ← 新增参数
-            )
-        else:
-            comment_objects = fetch_and_build_comments(
-                post_id=actual_post_id,
-                parent_id=top_comment_id,
-                cursor_time=cursor_time,
-                limit=page_size,
-                is_top_level=False,
-                current_user_id=user_id  # ← 新增参数
-            )
-
-        has_more = len(comment_objects) == page_size
-        next_cursor = comment_objects[-1].time if comment_objects else None
+        # 3. 执行统计查询
+        # 逻辑：统计该帖子下 root_id 为 NULL 的评论数量 (即顶级评论)
+        # 注意：根据你的 pawpal.sql，顶级评论的 root_id 是 NULL
+        result = db.query_one(
+            "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s AND root_id IS NULL",
+            (post_id,)
+        )
+        
+        count = result["cnt"] if result else 0
 
         return JsonTool(
             code=200,
-            msg="获取评论列表成功",
-            data={
-                "comments": [c.dict() for c in comment_objects],
-                "has_more": has_more,
-                "next_cursor": next_cursor
-            }
+            msg="获取顶级评论总数成功",
+            data={"count": count, "post_id": post_id}
         )
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"获取评论树时发生异常: {str(e)}")
         return JsonTool(code=500, msg=f"服务器错误: {str(e)}", data=None)
+
+
+# 获取帖子的顶级评论下子评论总数
+@router.post("/api/communityview/get_sub_comment_count", response_model=JsonTool)
+async def get_sub_comment_count(request_data: CommunityCommentRequest):
+    try:
+        # 1. 鉴权 (参考其他接口)
+        token = request_data.token
+        decoded = decode_token_for_auth(token)
+        user_id = decoded["user_id"]
+        claimed_token_version = decoded["token_version"]
+        
+        db_user = db.query_one("SELECT id, token_version FROM users WHERE id = %s", (user_id,))
+        if not db_user:
+            return JsonTool(code=401, msg="用户不存在", data=None)
+        current_token_version = db_user.get("token_version") or 0
+        if claimed_token_version != current_token_version:
+            return JsonTool(code=401, msg="登录状态已过期，请重新登录", data=None)
+
+        post_id = request_data.post_id
+        top_comment_id = request_data.top_comment_id
+
+        # 2. 参数校验
+        if top_comment_id is None:
+            return JsonTool(code=400, msg="请求子评论数量时，top_comment_id 不能为空", data=None)
+
+        # 3. 验证顶级评论是否存在且属于该帖子
+        valid_root = db.query_one(
+            "SELECT 1 FROM comments WHERE id = %s AND post_id = %s AND parent_id IS NULL",
+            (top_comment_id, post_id)
+        )
+        if not valid_root:
+            return JsonTool(code=404, msg="指定的顶级评论不存在或不属于此帖子", data=None)
+
+        # 4. 执行统计查询
+        # 逻辑：统计该帖子下 root_id 等于指定顶级评论 ID 的记录数
+        result = db.query_one(
+            "SELECT COUNT(*) as cnt FROM comments WHERE post_id = %s AND root_id = %s",
+            (post_id, top_comment_id)
+        )
+        
+        count = result["cnt"] if result else 0
+
+        return JsonTool(
+            code=200,
+            msg="获取子评论总数成功",
+            data={"count": count, "post_id": post_id, "top_comment_id": top_comment_id}
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonTool(code=500, msg=f"服务器错误: {str(e)}", data=None)
+
+
 
 # from pathlib import Path
 # # from tokenize import Comment
